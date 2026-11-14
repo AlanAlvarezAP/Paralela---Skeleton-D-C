@@ -4155,9 +4155,10 @@ template<typename Return, typename T, typename Info, typename Body>
 struct auto_stack_partitioner {
 	typedef auto_stack_partitioner<Return, T, Info, Body> partitioner;
 
-	static bool do_parallel(T& data) noexcept {
-		//return r._level < (internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::info->parLevel_); //BBF: LevelLimit;
-		return false;	//TODO: maybe implement auto-partitioner in the future
+	static bool do_parallel(T& data) noexcept
+    {
+		
+		return false;
 	}
 };
 
