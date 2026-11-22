@@ -18,10 +18,7 @@ namespace dpr
 
         template<typename T> struct StealStack;
 
-        // Detects if the user's Info defines do_serial_func, with the same expressions that
-        // do_it_serial_stack_struct uses (seq_parallel_stack_recursion.h). In that case do_it_serial
-        // delegates each subtree to that function, so the automatic partitioner keeps that path
-        // (limitation: those subtrees are not interruptible, no promotions inside them).
+        // true if Info has do_serial_func
         template<class Info, class T, class Return>
         struct hb_has_do_serial_func {
             template<class I>
@@ -55,7 +52,6 @@ namespace dpr
                 data.push_back(std::move(in_value));
             }
 
-            // needed when Info::child returns a reference instead of a new value
             void push(const TYPE& in_value)
             {
                 data.push_back(in_value);
@@ -136,7 +132,7 @@ namespace dpr
             for(int k = 0; k<needed && ps.can_promote(); k++){
 #ifdef DPR_DENY_STACK_RESIZE
                 if(ss->top + 1 > ss->stackSize){
-                    break;  // StealStack full and not allowed to grow: keep the rest in the private stack
+                    break;
                 }
 #else
                 while(ss->top + 1 > ss->stackSize){
@@ -150,7 +146,7 @@ namespace dpr
             st.t0 = std::chrono::steady_clock::now();
             if(sc.ss_localDepth(ss) >= sc.chunkSize){
                 sc.ss_release(ss,sc.chunkSize * (sc.ss_localDepth(ss) / sc.chunkSize));
-                // notify like releaseMultipleNodes (respects polling_interval)
+                // same as releaseMultipleNodes
                 if(sc.num_total_procs > 1){
 #ifndef DPR_USE_REGULAR_POLLING_INTERVAL
                     if(ss->polling_count % sc.polling_interval == 0){
@@ -180,7 +176,6 @@ namespace dpr
         template<class T, class Info>
         inline void push_children(PrivateStack<T>& in_stack, T& x, const Info& info)
         {
-            // LIFO stack: push in the reverse of the order do_it_serial processes the children
             const int n = info.num_children(x);
 #ifdef DPR_FORCE_ORDER_R_TO_L
             for (int i = 0; i < n; ++i)
@@ -190,10 +185,7 @@ namespace dpr
                 in_stack.push(info.child(i, x));
         }
 
-        // GatherInput: the main loop copies (ss_push_copy) every base node, and every non-base
-        // node when body.processNonBase, so rank 0 can gather the input at the end.
-        // The engine must do the same with the nodes it processes, or their data is lost
-        // when they run on another process. Replicated uses hb_no_copy_input (does nothing).
+        // GatherInput needs a copy of the processed nodes
         struct hb_no_copy_input {
             template<class SC, class T>
             static void copy(SC&, StealStack<T>*, const T&) {}

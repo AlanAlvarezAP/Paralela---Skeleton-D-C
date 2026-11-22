@@ -1,22 +1,5 @@
-"""
-Plots and summary tables from the CSV written by run_compare.py.
-
-Usage (anywhere with Python 3 + matplotlib, e.g. locally after copying the CSV from the cluster):
-    python3 build_scripts/plot_compare.py resultados_compare_full.csv [output_dir]
-    python3 build_scripts/plot_compare.py resultados_compare_tau.csv  [output_dir]
-
-The time used is the median of the repetitions of tiempo_bench_s (the time printed by the
-benchmark); if a benchmark printed nothing, tiempo_wall_s is used. Runs whose estado is not
-"ok" are left out (and listed).
-
-Output (output_dir, default "graficas_<csv name>"):
-    comparacion_<test>.png    simple vs each custom cutoff vs automatic (best N and N=30), per node count
-    barrido_N_<test>.png      time of automatic vs N, with simple and the best custom as reference
-    promociones_<test>.png    promotions vs N
-    escalabilidad.png         time vs nodes: simple, best and worst custom, automatic with best N
-    resumen.csv               median time, speedup vs simple, promotions of every configuration
-    tau.txt                   (tau CSV only) cost of one promotion and the suggested N
-"""
+# Plots and summary table from the CSV of run_compare.py
+# usage: python3 build_scripts/plot_compare.py resultados_compare_full.csv [output_dir]
 
 import csv
 import os
@@ -28,7 +11,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# validated categorical palette (fixed order, one hue per partitioner family)
 COLOR = {"simple": "#2a78d6", "custom": "#eb6834", "automatic": "#1baf7a", "custom_worst": "#eda100"}
 INK, INK2, GRID = "#1f1f1e", "#5f5e58", "#e4e3df"
 DEFAULT_N = 30
@@ -41,7 +23,7 @@ plt.rcParams.update({
 })
 
 if len(sys.argv) < 2:
-    sys.exit(__doc__)
+    sys.exit("usage: plot_compare.py file.csv [output_dir]")
 csv_path = sys.argv[1]
 out_dir = sys.argv[2] if len(sys.argv) > 2 else "graficas_" + os.path.splitext(os.path.basename(csv_path))[0]
 os.makedirs(out_dir, exist_ok=True)
@@ -60,7 +42,7 @@ def run_time(r):
     return float(t) if t else None
 
 
-# group the repetitions: key = (test, nodes, partitioner, config, cutoff, N, check_every)
+# key: test, nodes, partitioner, config, cutoff, N, check_every
 groups = defaultdict(list)
 proms = defaultdict(list)
 for r in rows:
@@ -110,7 +92,7 @@ def save(fig, name):
     print("wrote", path)
 
 
-# ---------------- tau experiment ----------------
+# tau
 if all(k[2] == "automatic" for k in groups) and len({k[5] for k in groups}) == 2:
     lines = []
     for test in tests:
@@ -125,7 +107,7 @@ if all(k[2] == "automatic" for k in groups) and len({k[5] for k in groups}) == 2
                 tau_us = (t_small - t_big) / c * 1e6
                 lines.append("%s, %d node(s): T(N=%s)=%.4f s  T(N=%s)=%.4f s  promotions(N=%s)=%d" %
                              (test, n, big[5], t_big, small[5], t_small, small[5], c))
-                lines.append("  tau = %.3f us per promotion  ->  suggested N = 20*tau = %.1f us" % (tau_us, 20 * tau_us))
+                lines.append("  tau = %.3f us, suggested N (20*tau) = %.1f us" % (tau_us, 20 * tau_us))
             else:
                 lines.append("%s, %d node(s): 0 promotions with N=%s, tau cannot be computed" % (test, n, small[5]))
     text = "\n".join(lines) + "\n"
@@ -133,7 +115,7 @@ if all(k[2] == "automatic" for k in groups) and len({k[5] for k in groups}) == 2
     print(text)
     sys.exit(0)
 
-# ---------------- summary table ----------------
+# summary
 with open(os.path.join(out_dir, "resumen.csv"), "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["test", "nodos", "partitioner", "config", "cutoff", "hb_period_us", "hb_check_every",
@@ -147,7 +129,7 @@ with open(os.path.join(out_dir, "resumen.csv"), "w", newline="") as f:
                     statistics.median(proms[k]) if proms[k] else ""])
 print("wrote", os.path.join(out_dir, "resumen.csv"))
 
-# ---------------- 1. comparison bars ----------------
+# comparison
 for test in tests:
     ns = [n for n in nodes_all if keys_of(test, n)]
     nbars = max(len(keys_of(test, n, "simple")) + len(keys_of(test, n, "custom")) + 2 for n in ns)
@@ -183,7 +165,7 @@ for test in tests:
     fig.suptitle("%s: simple vs custom vs automatic (mediana, barras = min-max)" % test, color=INK)
     save(fig, "comparacion_%s.png" % test)
 
-# ---------------- 2. sweep of N and 3. promotions ----------------
+# time and promotions vs N
 for test in tests:
     ns = [n for n in nodes_all if len(keys_of(test, n, "automatic")) > 1]
     if not ns:
@@ -228,7 +210,7 @@ for test in tests:
         ax.legend(fontsize=8)
     save(fig, "promociones_%s.png" % test)
 
-# ---------------- 4. scalability ----------------
+# scalability
 if len(nodes_all) > 1:
     fig, axes = plt.subplots(1, len(tests), figsize=(4.2 * len(tests), 4), squeeze=False)
     for ax, test in zip(axes[0], tests):

@@ -4,7 +4,7 @@
 set -e
 
 REPO_URL=${REPO_URL:-https://github.com/AlanAlvarezAP/Paralela---Skeleton-D-C.git}
-BRANCH=${BRANCH:-}	# e.g. BRANCH=feature/HeartBeatIntegration bash setup_all.sh (empty = default branch)
+BRANCH=${BRANCH:-}
 SKEL=$HOME/skeleton
 TBBROOT=$HOME/tbb2020
 
@@ -47,7 +47,6 @@ fi
 echo "### 4/5 Clonar repo"
 [ -d "$SKEL" ] || git clone ${BRANCH:+--branch "$BRANCH"} "$REPO_URL" "$SKEL"
 cd "$SKEL"
-# if the repo was already cloned, switch to BRANCH and update it
 if [ -n "$BRANCH" ]; then
   git fetch origin
   git checkout "$BRANCH"
@@ -69,7 +68,6 @@ mpicxx $FLAGS -DNO_VALIDATE --param=large-unit-insns=2000 --param=inline-unit-gr
 mpicxx $FLAGS -DNO_VALIDATE benchmarks/NQueens_dstack.cpp -o bin/NQueens_dstack $LIBS &
 mpicxx $FLAGS benchmarks/topsorts_dstack.cpp -o bin/topsorts_dstack $LIBS &
 mpicxx $FLAGS -DBRG_RNG -DDPARALLEL_STACK_RECURSION -I$U -I$U/rng $U/uts_par_rec.cpp bin/uts_c.o bin/brg_sha1.o -o bin/uts_dstack $LIBS &
-# GatherInput test of partitioner::automatic (validation kept: prints "check results: *SUCCESS*")
 mpicxx $FLAGS benchmarks/quicksort_dstack_gatherinput.cpp -o bin/quicksort_dstack_gatherinput $LIBS &
 wait
 
