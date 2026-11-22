@@ -4,6 +4,7 @@
 #include <deque>
 #include <utility>
 #include <chrono>
+#include <type_traits>
 #include "dparallel_recursion/seq_parallel_stack_recursion.h"
 
 
@@ -17,6 +18,30 @@ namespace dpr
 
         template<typename T> struct StealStack;
 
+        // Detects if the user's Info defines do_serial_func, with the same expressions that
+        // do_it_serial_stack_struct uses (seq_parallel_stack_recursion.h). In that case do_it_serial
+        // delegates each subtree to that function, so the automatic partitioner keeps that path
+        // (limitation: those subtrees are not interruptible, no promotions inside them).
+        template<class Info, class T, class Return>
+        struct hb_has_do_serial_func {
+            template<class I>
+            static auto test(int) -> decltype((void)std::declval<const I*>()->do_serial_func(std::declval<T&>(), std::declval<Return&>()), std::true_type());
+            template<class I>
+            static std::false_type test(...);
+            typedef decltype(test<Info>(0)) type;
+            static const bool value = type::value;
+        };
+
+        template<class Info, class T>
+        struct hb_has_do_serial_func_void {
+            template<class I>
+            static auto test(int) -> decltype((void)std::declval<const I*>()->do_serial_func(std::declval<T&>()), std::true_type());
+            template<class I>
+            static std::false_type test(...);
+            typedef decltype(test<Info>(0)) type;
+            static const bool value = type::value;
+        };
+
         template <typename TYPE>
         class PrivateStack
         {
@@ -28,6 +53,12 @@ namespace dpr
             void push(TYPE&& in_value)
             {
                 data.push_back(std::move(in_value));
+            }
+
+            // needed when Info::child returns a reference instead of a new value
+            void push(const TYPE& in_value)
+            {
+                data.push_back(in_value);
             }
         
             TYPE pop()
@@ -46,9 +77,11 @@ namespace dpr
                 return x;
             }
         
-            bool can_promote() { return data.size() >= 2; }
-        
-            bool empty() { return data.empty(); }
+            bool can_promote() const { return data.size() >= 2; }
+
+            bool empty() const { return data.empty(); }
+
+            std::size_t size() const { return data.size(); }
         private:
             std::deque<TYPE> data;
         };
@@ -101,7 +134,11 @@ namespace dpr
             }
 
             for(int k = 0; k<needed && ps.can_promote(); k++){
-#ifndef DPR_DENY_STACK_RESIZE
+#ifdef DPR_DENY_STACK_RESIZE
+                if(ss->top + 1 > ss->stackSize){
+                    break;  // StealStack full and not allowed to grow: keep the rest in the private stack
+                }
+#else
                 while(ss->top + 1 > ss->stackSize){
                     sc.ss_growStackSize(ss);
                 }
@@ -113,8 +150,14 @@ namespace dpr
             st.t0 = std::chrono::steady_clock::now();
             if(sc.ss_localDepth(ss) >= sc.chunkSize){
                 sc.ss_release(ss,sc.chunkSize * (sc.ss_localDepth(ss) / sc.chunkSize));
+                // notify like releaseMultipleNodes (respects polling_interval)
                 if(sc.num_total_procs > 1){
-                    sc.ws_make_progress(ss);
+#ifndef DPR_USE_REGULAR_POLLING_INTERVAL
+                    if(ss->polling_count % sc.polling_interval == 0){
+                        sc.ws_make_progress(ss);
+                    }
+                    ss->polling_count++;
+#endif
                 }else{
                     SC::cbarrier_cancel();
                 }
@@ -137,14 +180,34 @@ namespace dpr
         template<class T, class Info>
         inline void push_children(PrivateStack<T>& in_stack, T& x, const Info& info)
         {
+            // LIFO stack: push in the reverse of the order do_it_serial processes the children
             const int n = info.num_children(x);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+            for (int i = 0; i < n; ++i)
+#else
             for (int i = n - 1; i >= 0; --i)
+#endif
                 in_stack.push(info.child(i, x));
         }
 
-        template<class Return, class T, class Info, class Body, class StackClass>
+        // GatherInput: the main loop copies (ss_push_copy) every base node, and every non-base
+        // node when body.processNonBase, so rank 0 can gather the input at the end.
+        // The engine must do the same with the nodes it processes, or their data is lost
+        // when they run on another process. Replicated uses hb_no_copy_input (does nothing).
+        struct hb_no_copy_input {
+            template<class SC, class T>
+            static void copy(SC&, StealStack<T>*, const T&) {}
+        };
+
+        struct hb_copy_input {
+            template<class SC, class T>
+            static void copy(SC& sc, StealStack<T>* ss, const T& x) { sc.ss_push_copy(ss, x); }
+        };
+
+        template<class Return, class T, class Info, class Body, class StackClass, class CopyInput = hb_no_copy_input>
         unsigned long long heartbeat_serial(Return& r, T parent, const Info& info,
-                                            Body& body, StackClass& sc, StealStack<T>* ss)
+                                            Body& body, StackClass& sc, StealStack<T>* ss,
+                                            CopyInput = CopyInput())
         {
             PrivateStack<T> stack;
             HBState &hb_state = hb_thread_state();
@@ -160,12 +223,18 @@ namespace dpr
                 nodes++;
 
                 if (info.is_base(x))
+                {
                     body.post(body.base(x), r);
+                    CopyInput::copy(sc, ss, x);
+                }
                 else
                 {
                     body.pre_rec(x);
                     if (body.processNonBase)
+                    {
                         body.post(body.non_base(x), r);
+                        CopyInput::copy(sc, ss, x);
+                    }
 
                     push_children(stack, x, info);
                 }
@@ -176,9 +245,10 @@ namespace dpr
             return nodes;
         }
 
-        template<class T, class Info, class Body, class StackClass>
+        template<class T, class Info, class Body, class StackClass, class CopyInput = hb_no_copy_input>
         unsigned long long heartbeat_serial(T parent, const Info& info,
-                                            Body& body, StackClass& sc, StealStack<T>* ss)
+                                            Body& body, StackClass& sc, StealStack<T>* ss,
+                                            CopyInput = CopyInput())
         {
             PrivateStack<T> stack;
             HBState &hb_state = hb_thread_state();
@@ -194,12 +264,18 @@ namespace dpr
                 nodes++;
 
                 if (info.is_base(x))
+                {
                     body.base(x);
+                    CopyInput::copy(sc, ss, x);
+                }
                 else
                 {
                     body.pre_rec(x);
                     if (body.processNonBase)
+                    {
                         body.non_base(x);
+                        CopyInput::copy(sc, ss, x);
+                    }
                     push_children(stack, x, info);
                 }
 

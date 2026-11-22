@@ -40,6 +40,8 @@
 #include <map>
 #include <limits>
 #include <cmath>
+#include <cstdlib>
+#include <cstdio>
 #include <mpi.h>
 #include "dparallel_recursion/dpr_utils.h"
 #include "dparallel_recursion/general_reference_wrapper.h"
@@ -49,6 +51,7 @@
 #include "dparallel_recursion/ChunkSelector.h"
 #include "dparallel_recursion/parallel_stack_recursion.h"
 #include "dparallel_recursion/seq_parallel_stack_recursion.h"
+#include "dparallel_recursion/HeartBeat.h"
 #include "dparallel_recursion/Behavior.h"
 #include "dparallel_recursion/dpr_mpi_stack_comm.h"
 
@@ -188,6 +191,84 @@ inline int& trpPredictWorkCountGl() {
 constexpr int trpPredictWorkCountGl(const DSParConfigInfo& dspar_config_info) {
 	return (dspar_config_info.trp_predict_workcount == UNDEFINED_PARAMETER) ? trpPredictWorkCountGl() : dspar_config_info.trp_predict_workcount;
 }
+
+/** Heartbeat (partitioner::automatic) parameters **/
+/// Reads an integer environment variable; returns defaultValue if it is not set, not a number or < minValue
+inline int hbEnvIntOrDefault(const char* name, const int defaultValue, const int minValue) {
+	const char* str = std::getenv(name);
+	if (str == nullptr) {
+		return defaultValue;
+	}
+	char* end = nullptr;
+	const long value = std::strtol(str, &end, 10);
+	if ((end == str) || (*end != '\0') || (value < minValue) || (value > std::numeric_limits<int>::max())) {
+		return defaultValue;
+	}
+	return static_cast<int>(value);
+}
+
+inline int& hbPeriodUsGl() {
+	static int hbPeriodUsGl = hbEnvIntOrDefault("DPR_HB_PERIOD_US", static_cast<int>(HB_DEFAULT_PERIOD), 0);	// heartbeat period N (microseconds)
+	return hbPeriodUsGl;
+}
+
+constexpr int hbPeriodUsGl(const DSParConfigInfo& dspar_config_info) {
+	return (dspar_config_info.hb_period_us == UNDEFINED_PARAMETER) ? hbPeriodUsGl() : dspar_config_info.hb_period_us;
+}
+
+inline int& hbCheckEveryGl() {
+	static int hbCheckEveryGl = hbEnvIntOrDefault("DPR_HB_CHECK_EVERY", static_cast<int>(HB_DEFAULT_CHECK_EVERY), 1);	// nodes between clock reads
+	return hbCheckEveryGl;
+}
+
+constexpr int hbCheckEveryGl(const DSParConfigInfo& dspar_config_info) {
+	return (dspar_config_info.hb_check_every == UNDEFINED_PARAMETER) ? hbCheckEveryGl() : dspar_config_info.hb_check_every;
+}
+
+/// Heartbeat configuration chosen by run()/run_test() before launching the threads.
+/// Each thread copies it into its thread_local hb_config() at the start of run_thread*.
+inline HBConfig& hbLaunchConfig() {
+	static HBConfig hbLaunchConfig;
+	return hbLaunchConfig;
+}
+
+inline HBConfig hbMakeConfig(const DSParConfigInfo& dspar_config_info) {
+	HBConfig cfg;
+	const int periodUs = hbPeriodUsGl(dspar_config_info);
+	const int checkEvery = hbCheckEveryGl(dspar_config_info);
+	cfg.period = std::chrono::microseconds((periodUs >= 0) ? periodUs : static_cast<int>(HB_DEFAULT_PERIOD));
+	cfg.check_every = static_cast<unsigned int>((checkEvery >= 1) ? checkEvery : 1);
+	return cfg;
+}
+
+/// Called at the start of each run_thread*: loads the heartbeat config and resets the heartbeat state
+inline void hbInitThread() {
+	hb_config() = hbLaunchConfig();
+	hb_thread_state() = HBState();
+}
+
+/// DPR_HB_STATS=1 enables the heartbeat statistics (off by default, so the normal output does not change)
+inline bool hbStatsEnabled() {
+	static const bool hbStatsEnabled = (hbEnvIntOrDefault("DPR_HB_STATS", 0, 0) != 0);
+	return hbStatsEnabled;
+}
+
+/// Created at the start of each run_thread*. When the thread leaves the function (any return path)
+/// it prints its number of heartbeat promotions, one line per thread on stderr:
+///   HB_STATS mode=<run|test> rank=<r> thread=<t> promotions=<n>
+struct HBStatsReporter {
+	const char* const mode;
+	const int rank;
+	const int threadId;
+
+	HBStatsReporter(const char* _mode, const int _rank, const int _threadId) : mode(_mode), rank(_rank), threadId(_threadId) { }
+
+	~HBStatsReporter() {
+		if (hbStatsEnabled()) {
+			std::fprintf(stderr, "HB_STATS mode=%s rank=%d thread=%d promotions=%llu\n", mode, rank, threadId, hb_thread_state().promotions);
+		}
+	}
+};
 
 typedef struct {
 	enum dpsr_td_colors color;
@@ -1917,6 +1998,7 @@ public:
 		const int mpiWorkRequestLimit = ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) >= num_total_threads) || (internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) == 0)) ? num_total_threads : ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) < 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) > 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) < num_total_threads) ? std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)):num_total_threads):1) : internal_mpi::mpiWorkRequestLimitGl(dspar_config_info));
 		const int trpPredictWorkCount = (threadsRequestPolicy == THREAD_MPI_STEAL_POLICY_PREDICTIVE) ? (((internal_mpi::trpPredictWorkCountGl(dspar_config_info) >= num_total_threads) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) == 0) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) < TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS)) ? num_total_threads : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_HALF) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/2+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_THREE_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)*3-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_ALL) ? (num_total_threads-1)/mpiWorkRequestLimit+1 : internal_mpi::trpPredictWorkCountGl(dspar_config_info)))))) : 0;
 		const int pollingInterval = internal_mpi::pollingIntervalGl(dspar_config_info);
+		internal_mpi::hbLaunchConfig() = internal_mpi::hbMakeConfig(dspar_config_info);
 		dpr::internal_mpi::lastDpsrRunExtraInfo().chunkSize = chunkSize;
 		dpr::internal_mpi::lastDpsrRunExtraInfo().nthreads = num_total_threads;
 		std::chrono::steady_clock::time_point init_run_time;
@@ -2067,6 +2149,7 @@ public:
 		const int mpiWorkRequestLimit = ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) >= num_total_threads) || (internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) == 0)) ? num_total_threads : ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) < 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) > 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) < num_total_threads) ? std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)):num_total_threads):1) : internal_mpi::mpiWorkRequestLimitGl(dspar_config_info));
 		const int trpPredictWorkCount = (threadsRequestPolicy == THREAD_MPI_STEAL_POLICY_PREDICTIVE) ? (((internal_mpi::trpPredictWorkCountGl(dspar_config_info) >= num_total_threads) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) == 0) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) < TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS)) ? num_total_threads : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_HALF) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/2+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_THREE_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)*3-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_ALL) ? (num_total_threads-1)/mpiWorkRequestLimit+1 : internal_mpi::trpPredictWorkCountGl(dspar_config_info)))))) : 0;
 		const int pollingInterval = internal_mpi::pollingIntervalGl(dspar_config_info);
+		internal_mpi::hbLaunchConfig() = internal_mpi::hbMakeConfig(dspar_config_info);
 		std::vector<dpr::ResultChunkTest> res;
 		std::vector<Return> r(num_total_threads);
 		std::vector<unsigned long long int> nNodesArr(num_total_threads);
@@ -2429,6 +2512,8 @@ public:
 	static void run_thread(const int thrId, const int numTotalThreads, const int rank, const int numTotalProcs, const int chunkSize, const int chunksToSteal, const unsigned int polling_interval, const int threadsRequestPolicy, const int mpiWorkRequestLimit, const int trpPredictWorkCount, internal_mpi::StealStack<T>* ss, general_reference_wrapper<T>& root, const Info& info, Body body, Return& rr, const Behavior behavior, dpr::internal::thread_barrier& threadBarrier) {
 		try {
 			const int threadId = thrId;
+			internal_mpi::hbInitThread();
+			internal_mpi::HBStatsReporter hbStatsReporter("run", rank, threadId);
 
 			Return r = std::move(rr);
 			internal_mpi_psr threadParStackClass(threadId, numTotalThreads, rank, numTotalProcs, chunkSize, chunksToSteal, polling_interval, threadsRequestPolicy, mpiWorkRequestLimit, trpPredictWorkCount);
@@ -2466,15 +2551,7 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								Partitioner::run_serial_gather(r, data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -2586,15 +2663,7 @@ public:
 								body.post(body.non_base(*data), r);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								Partitioner::run_serial(r, data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -2716,6 +2785,8 @@ public:
 	static void run_thread_test(const int thrId, const int numTotalThreads, const int rank, const int numTotalProcs, const int chunkSize, const int chunksToSteal, const unsigned int polling_interval, const int threadsRequestPolicy, const int mpiWorkRequestLimit, const int trpPredictWorkCount, internal_mpi::StealStack<T>* ss, general_reference_wrapper<T>& root, const Info& info, Body body, Return& rr, const Behavior behavior, unsigned long long int& nNodes, const unsigned long long int testSize, char& exitNormally, dpr::internal::thread_barrier& threadBarrier) {
 		try {
 			const int threadId = thrId;
+			internal_mpi::hbInitThread();
+			internal_mpi::HBStatsReporter hbStatsReporter("test", rank, threadId);
 			exitNormally = 1;
 
 			Return r = std::move(rr);
@@ -2769,15 +2840,7 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								ss->nNodes += Partitioner::run_serial_gather(r, data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -2904,15 +2967,7 @@ public:
 								body.post(body.non_base(*data), r);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								ss->nNodes += Partitioner::run_serial(r, data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -3055,6 +3110,7 @@ public:
 		const int mpiWorkRequestLimit = ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) >= num_total_threads) || (internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) == 0)) ? num_total_threads : ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) < 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) > 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) < num_total_threads) ? std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)):num_total_threads):1) : internal_mpi::mpiWorkRequestLimitGl(dspar_config_info));
 		const int trpPredictWorkCount = (threadsRequestPolicy == THREAD_MPI_STEAL_POLICY_PREDICTIVE) ? (((internal_mpi::trpPredictWorkCountGl(dspar_config_info) >= num_total_threads) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) == 0) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) < TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS)) ? num_total_threads : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_HALF) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/2+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_THREE_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)*3-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_ALL) ? (num_total_threads-1)/mpiWorkRequestLimit+1 : internal_mpi::trpPredictWorkCountGl(dspar_config_info)))))) : 0;
 		const int pollingInterval = internal_mpi::pollingIntervalGl(dspar_config_info);
+		internal_mpi::hbLaunchConfig() = internal_mpi::hbMakeConfig(dspar_config_info);
 		dpr::internal_mpi::lastDpsrRunExtraInfo().chunkSize = chunkSize;
 		dpr::internal_mpi::lastDpsrRunExtraInfo().nthreads = num_total_threads;
 		std::chrono::steady_clock::time_point init_run_time;
@@ -3178,6 +3234,7 @@ public:
 		const int mpiWorkRequestLimit = ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) >= num_total_threads) || (internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) == 0)) ? num_total_threads : ((internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) < 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) > 0) ? ((std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)) < num_total_threads) ? std::round(static_cast<double>(internal_mpi::mpiWorkRequestLimitGl(dspar_config_info) * num_total_threads) / static_cast<double>(internal_mpi::INTERNAL_MPIWS_CONSTADJUST)):num_total_threads):1) : internal_mpi::mpiWorkRequestLimitGl(dspar_config_info));
 		const int trpPredictWorkCount = (threadsRequestPolicy == THREAD_MPI_STEAL_POLICY_PREDICTIVE) ? (((internal_mpi::trpPredictWorkCountGl(dspar_config_info) >= num_total_threads) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) == 0) || (internal_mpi::trpPredictWorkCountGl(dspar_config_info) < TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS)) ? num_total_threads : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_HALF) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)-1)/2+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_THREE_QUARTERS) ? (((num_total_threads-1)/mpiWorkRequestLimit+1)*3-1)/4+1 : ((internal_mpi::trpPredictWorkCountGl(dspar_config_info) == TRP_PREDICT_WORKCOUNT_RELATIVE_TO_MPIWORKREQUEST_FILL_ALL) ? (num_total_threads-1)/mpiWorkRequestLimit+1 : internal_mpi::trpPredictWorkCountGl(dspar_config_info)))))) : 0;
 		const int pollingInterval = internal_mpi::pollingIntervalGl(dspar_config_info);
+		internal_mpi::hbLaunchConfig() = internal_mpi::hbMakeConfig(dspar_config_info);
 		std::vector<dpr::ResultChunkTest> res;
 
 		std::vector<unsigned long long int> nNodesArr(num_total_threads);
@@ -3532,6 +3589,8 @@ public:
 	static void run_thread(const int thrId, const int numTotalThreads, const int rank, const int numTotalProcs, const int chunkSize, const int chunksToSteal, const unsigned int polling_interval, const int threadsRequestPolicy, const int mpiWorkRequestLimit, const int trpPredictWorkCount, internal_mpi::StealStack<T>* ss, general_reference_wrapper<T>& root, const Info& info, Body body, const Behavior behavior, dpr::internal::thread_barrier& threadBarrier) {
 		try {
 			const int threadId = thrId;
+			internal_mpi::hbInitThread();
+			internal_mpi::HBStatsReporter hbStatsReporter("run", rank, threadId);
 
 			internal_mpi_psr threadParStackClass(threadId, numTotalThreads, rank, numTotalProcs, chunkSize, chunksToSteal, polling_interval, threadsRequestPolicy, mpiWorkRequestLimit, trpPredictWorkCount);
 			threadParStackClass.init_mpi_communications();
@@ -3568,15 +3627,7 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								Partitioner::run_serial_gather_void(data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -3688,15 +3739,7 @@ public:
 								body.non_base(*data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								Partitioner::run_serial_void(data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -3817,6 +3860,8 @@ public:
 	static void run_thread_test(const int thrId, const int numTotalThreads, const int rank, const int numTotalProcs, const int chunkSize, const int chunksToSteal, const unsigned int polling_interval, const int threadsRequestPolicy, const int mpiWorkRequestLimit, const int trpPredictWorkCount, internal_mpi::StealStack<T>* ss, general_reference_wrapper<T>& root, const Info& info, Body body, const Behavior behavior, unsigned long long int& nNodes, const unsigned long long int testSize, char& exitNormally, dpr::internal::thread_barrier& threadBarrier) {
 		try {
 			const int threadId = thrId;
+			internal_mpi::hbInitThread();
+			internal_mpi::HBStatsReporter hbStatsReporter("test", rank, threadId);
 			exitNormally = 1;
 
 			internal_mpi_psr threadParStackClass(threadId, numTotalThreads, rank, numTotalProcs, chunkSize, chunksToSteal, polling_interval, threadsRequestPolicy, mpiWorkRequestLimit, trpPredictWorkCount);
@@ -3868,15 +3913,7 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								ss->nNodes += Partitioner::run_serial_gather_void(data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -4002,15 +4039,7 @@ public:
 								body.non_base(*data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								const int numChildren = info.num_children(*data);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-								for (int i = numChildren-1; i >= 0; --i) {
-#else
-								for (int i = 0; i < numChildren; ++i) {
-#endif
-									internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
-								}
-								threadParStackClass.ss_pop(ss);
+								ss->nNodes += Partitioner::run_serial_void(data, info, body, threadParStackClass, ss);
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -4137,9 +4166,56 @@ public:
 
 };
 
+/// Original sequential branch (do_it_serial on each child). Shared by simple and custom partitioners.
+/// data points to the parent at the top of the StealStack, already processed (pre, pre_rec, non_base).
+/// run_serial processes its children and pops the parent from the StealStack (same code as before).
+/// Returns 0: the nodes processed by do_it_serial were never counted in ss->nNodes.
+template<typename Return, typename T, typename Info, typename Body>
+struct native_serial_stack_partitioner {
+
+	template<typename R, typename SC>
+	static unsigned long long run_serial(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+		for (int i = numChildren-1; i >= 0; --i) {
+#else
+		for (int i = 0; i < numChildren; ++i) {
+#endif
+			internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
+		}
+		sc.ss_pop(ss);
+		return 0;
+	}
+
+	template<typename SC>
+	static unsigned long long run_serial_void(T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+		for (int i = numChildren-1; i >= 0; --i) {
+#else
+		for (int i = 0; i < numChildren; ++i) {
+#endif
+			internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
+		}
+		sc.ss_pop(ss);
+		return 0;
+	}
+
+	/// GatherInput: same as before (do_it_serial never copied nodes with ss_push_copy)
+	template<typename R, typename SC>
+	static unsigned long long run_serial_gather(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		return run_serial(r, data, info, body, sc, ss);
+	}
+
+	template<typename SC>
+	static unsigned long long run_serial_gather_void(T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		return run_serial_void(data, info, body, sc, ss);
+	}
+};
+
 /// Implementation of the simple parallelization strategy
 template<typename Return, typename T, typename Info, typename Body>
-struct simple_stack_partitioner {
+struct simple_stack_partitioner : native_serial_stack_partitioner<Return, T, Info, Body> {
 	typedef simple_stack_partitioner<Return, T, Info, Body> partitioner;
 
 	/** Since in the current implementation Partitioner::do_parallel in only called
@@ -4155,16 +4231,62 @@ template<typename Return, typename T, typename Info, typename Body>
 struct auto_stack_partitioner {
 	typedef auto_stack_partitioner<Return, T, Info, Body> partitioner;
 
+	/// Heartbeat: everything starts sequential; parallelism comes from promotions
 	static bool do_parallel(T& data) noexcept
     {
 		
 		return false;
 	}
+
+	/// Sequential branch: explicit private stack + periodic promotion (HeartBeat.h).
+	/// The parent is copied and popped BEFORE running the engine: promotions push into ss->stack,
+	/// which may grow (invalidating data) and would make a later ss_pop remove a promoted node.
+	/// If Info defines do_serial_func, the original do_it_serial path is kept (compile-time constant condition).
+	template<typename R, typename SC>
+	static unsigned long long run_serial(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		if (internal_mpi::hb_has_do_serial_func<Info, T, R>::value) {
+			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial(r, data, info, body, sc, ss);
+		}
+		T parent = *data;
+		sc.ss_pop(ss);
+		return internal_mpi::heartbeat_serial(r, std::move(parent), info, body, sc, ss);
+	}
+
+	template<typename SC>
+	static unsigned long long run_serial_void(T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		if (internal_mpi::hb_has_do_serial_func_void<Info, T>::value) {
+			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial_void(data, info, body, sc, ss);
+		}
+		T parent = *data;
+		sc.ss_pop(ss);
+		return internal_mpi::heartbeat_serial(std::move(parent), info, body, sc, ss);
+	}
+
+	/// GatherInput: the engine also copies the nodes it processes (ss_push_copy), like the main loop
+	template<typename R, typename SC>
+	static unsigned long long run_serial_gather(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		if (internal_mpi::hb_has_do_serial_func<Info, T, R>::value) {
+			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial_gather(r, data, info, body, sc, ss);
+		}
+		T parent = *data;
+		sc.ss_pop(ss);
+		return internal_mpi::heartbeat_serial(r, std::move(parent), info, body, sc, ss, internal_mpi::hb_copy_input());
+	}
+
+	template<typename SC>
+	static unsigned long long run_serial_gather_void(T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
+		if (internal_mpi::hb_has_do_serial_func_void<Info, T>::value) {
+			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial_gather_void(data, info, body, sc, ss);
+		}
+		T parent = *data;
+		sc.ss_pop(ss);
+		return internal_mpi::heartbeat_serial(std::move(parent), info, body, sc, ss, internal_mpi::hb_copy_input());
+	}
 };
 
 /// Implementation of the customized parallelization strategy
 template<typename Return, typename T, typename Info, typename Body>
-struct custom_stack_partitioner {
+struct custom_stack_partitioner : native_serial_stack_partitioner<Return, T, Info, Body> {
 	typedef custom_stack_partitioner<Return, T, Info, Body> partitioner;
 
 	static bool do_parallel(T& data) noexcept(noexcept(internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::info->do_parallel(data))) {
