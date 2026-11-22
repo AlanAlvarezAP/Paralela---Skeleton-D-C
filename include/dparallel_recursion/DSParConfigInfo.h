@@ -82,15 +82,19 @@ struct DSParConfigInfo {
 	int threads_request_policy;
 	int mpi_workrequest_limits;
 	int trp_predict_workcount;
+	int hb_period_us;		// heartbeat period (us)
+	int hb_check_every;
 
-	DSParConfigInfo(const int _nthreads = dpr::UNDEFINED_PARAMETER, const int _chunksToSteal = dpr::UNDEFINED_PARAMETER, const int _polling_interval = dpr::UNDEFINED_PARAMETER, const int _initial_stack_size = dpr::UNDEFINED_PARAMETER, const int _threads_request_policy = dpr::UNDEFINED_PARAMETER, const int _mpi_workrequest_limits = dpr::UNDEFINED_PARAMETER, const int _trp_predict_workcount = dpr::UNDEFINED_PARAMETER) :
+	DSParConfigInfo(const int _nthreads = dpr::UNDEFINED_PARAMETER, const int _chunksToSteal = dpr::UNDEFINED_PARAMETER, const int _polling_interval = dpr::UNDEFINED_PARAMETER, const int _initial_stack_size = dpr::UNDEFINED_PARAMETER, const int _threads_request_policy = dpr::UNDEFINED_PARAMETER, const int _mpi_workrequest_limits = dpr::UNDEFINED_PARAMETER, const int _trp_predict_workcount = dpr::UNDEFINED_PARAMETER, const int _hb_period_us = dpr::UNDEFINED_PARAMETER, const int _hb_check_every = dpr::UNDEFINED_PARAMETER) :
 		nthreads(_nthreads),
 		chunksToSteal(_chunksToSteal),
 		polling_interval(_polling_interval),
 		initial_stack_size(_initial_stack_size),
 		threads_request_policy(_threads_request_policy),
 		mpi_workrequest_limits(_mpi_workrequest_limits),
-		trp_predict_workcount(_trp_predict_workcount)
+		trp_predict_workcount(_trp_predict_workcount),
+		hb_period_us(_hb_period_us),
+		hb_check_every(_hb_check_every)
 	{ }
 
 };

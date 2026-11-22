@@ -1,9 +1,10 @@
 #!/bin/bash
-# setup_todo.sh - instala dependencias, compila TBB y compila los 4 benchmarks *_dstack.
+# setup_todo.sh - instala dependencias, compila TBB y compila los benchmarks *_dstack (4 + quicksort_dstack_gatherinput).
 # (junta setup_skeleton.sh + build_dstack.sh; ya no genera build_all/run_all/sweep ni tests)
 set -e
 
 REPO_URL=${REPO_URL:-https://github.com/AlanAlvarezAP/Paralela---Skeleton-D-C.git}
+BRANCH=${BRANCH:-}
 SKEL=$HOME/skeleton
 TBBROOT=$HOME/tbb2020
 
@@ -44,11 +45,16 @@ EOF
 fi
 
 echo "### 4/5 Clonar repo"
-[ -d "$SKEL" ] || git clone "$REPO_URL" "$SKEL"
+[ -d "$SKEL" ] || git clone ${BRANCH:+--branch "$BRANCH"} "$REPO_URL" "$SKEL"
 cd "$SKEL"
+if [ -n "$BRANCH" ]; then
+  git fetch origin
+  git checkout "$BRANCH"
+  git pull --ff-only origin "$BRANCH"
+fi
 mkdir -p bin results
 
-echo "### 5/5 Compilar los 4 benchmarks dstack"
+echo "### 5/5 Compilar los benchmarks dstack"
 FLAGS="-O3 -DNDEBUG -pthread -include memory -fpermissive -Wno-changes-meaning -Wno-deprecated-declarations -Wno-return-type -Wno-unused-result -Iinclude -I$TBBROOT/include"
 LIBS="-L$TBBLIB -ltbb -lrt -lboost_serialization -Wl,-rpath,$TBBLIB"
 U=benchmarks/uts
@@ -62,6 +68,7 @@ mpicxx $FLAGS -DNO_VALIDATE --param=large-unit-insns=2000 --param=inline-unit-gr
 mpicxx $FLAGS -DNO_VALIDATE benchmarks/NQueens_dstack.cpp -o bin/NQueens_dstack $LIBS &
 mpicxx $FLAGS benchmarks/topsorts_dstack.cpp -o bin/topsorts_dstack $LIBS &
 mpicxx $FLAGS -DBRG_RNG -DDPARALLEL_STACK_RECURSION -I$U -I$U/rng $U/uts_par_rec.cpp bin/uts_c.o bin/brg_sha1.o -o bin/uts_dstack $LIBS &
+mpicxx $FLAGS benchmarks/quicksort_dstack_gatherinput.cpp -o bin/quicksort_dstack_gatherinput $LIBS &
 wait
 
 ls -l bin/*_dstack
