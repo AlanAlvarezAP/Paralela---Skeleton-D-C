@@ -192,8 +192,7 @@ constexpr int trpPredictWorkCountGl(const DSParConfigInfo& dspar_config_info) {
 	return (dspar_config_info.trp_predict_workcount == UNDEFINED_PARAMETER) ? trpPredictWorkCountGl() : dspar_config_info.trp_predict_workcount;
 }
 
-/** Heartbeat (partitioner::automatic) parameters **/
-/// Reads an integer environment variable; returns defaultValue if it is not set, not a number or < minValue
+/** Heartbeat parameters **/
 inline int hbEnvIntOrDefault(const char* name, const int defaultValue, const int minValue) {
 	const char* str = std::getenv(name);
 	if (str == nullptr) {
@@ -208,7 +207,7 @@ inline int hbEnvIntOrDefault(const char* name, const int defaultValue, const int
 }
 
 inline int& hbPeriodUsGl() {
-	static int hbPeriodUsGl = hbEnvIntOrDefault("DPR_HB_PERIOD_US", static_cast<int>(HB_DEFAULT_PERIOD), 0);	// heartbeat period N (microseconds)
+	static int hbPeriodUsGl = hbEnvIntOrDefault("DPR_HB_PERIOD_US", static_cast<int>(HB_DEFAULT_PERIOD), 0);
 	return hbPeriodUsGl;
 }
 
@@ -217,7 +216,7 @@ constexpr int hbPeriodUsGl(const DSParConfigInfo& dspar_config_info) {
 }
 
 inline int& hbCheckEveryGl() {
-	static int hbCheckEveryGl = hbEnvIntOrDefault("DPR_HB_CHECK_EVERY", static_cast<int>(HB_DEFAULT_CHECK_EVERY), 1);	// nodes between clock reads
+	static int hbCheckEveryGl = hbEnvIntOrDefault("DPR_HB_CHECK_EVERY", static_cast<int>(HB_DEFAULT_CHECK_EVERY), 1);
 	return hbCheckEveryGl;
 }
 
@@ -225,8 +224,6 @@ constexpr int hbCheckEveryGl(const DSParConfigInfo& dspar_config_info) {
 	return (dspar_config_info.hb_check_every == UNDEFINED_PARAMETER) ? hbCheckEveryGl() : dspar_config_info.hb_check_every;
 }
 
-/// Heartbeat configuration chosen by run()/run_test() before launching the threads.
-/// Each thread copies it into its thread_local hb_config() at the start of run_thread*.
 inline HBConfig& hbLaunchConfig() {
 	static HBConfig hbLaunchConfig;
 	return hbLaunchConfig;
@@ -241,21 +238,17 @@ inline HBConfig hbMakeConfig(const DSParConfigInfo& dspar_config_info) {
 	return cfg;
 }
 
-/// Called at the start of each run_thread*: loads the heartbeat config and resets the heartbeat state
 inline void hbInitThread() {
 	hb_config() = hbLaunchConfig();
 	hb_thread_state() = HBState();
 }
 
-/// DPR_HB_STATS=1 enables the heartbeat statistics (off by default, so the normal output does not change)
 inline bool hbStatsEnabled() {
 	static const bool hbStatsEnabled = (hbEnvIntOrDefault("DPR_HB_STATS", 0, 0) != 0);
 	return hbStatsEnabled;
 }
 
-/// Created at the start of each run_thread*. When the thread leaves the function (any return path)
-/// it prints its number of heartbeat promotions, one line per thread on stderr:
-///   HB_STATS mode=<run|test> rank=<r> thread=<t> promotions=<n>
+// prints the promotions of each thread when DPR_HB_STATS=1
 struct HBStatsReporter {
 	const char* const mode;
 	const int rank;
@@ -4166,10 +4159,7 @@ public:
 
 };
 
-/// Original sequential branch (do_it_serial on each child). Shared by simple and custom partitioners.
-/// data points to the parent at the top of the StealStack, already processed (pre, pre_rec, non_base).
-/// run_serial processes its children and pops the parent from the StealStack (same code as before).
-/// Returns 0: the nodes processed by do_it_serial were never counted in ss->nNodes.
+// original serial branch, used by simple and custom
 template<typename Return, typename T, typename Info, typename Body>
 struct native_serial_stack_partitioner {
 
@@ -4201,7 +4191,6 @@ struct native_serial_stack_partitioner {
 		return 0;
 	}
 
-	/// GatherInput: same as before (do_it_serial never copied nodes with ss_push_copy)
 	template<typename R, typename SC>
 	static unsigned long long run_serial_gather(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
 		return run_serial(r, data, info, body, sc, ss);
@@ -4231,17 +4220,13 @@ template<typename Return, typename T, typename Info, typename Body>
 struct auto_stack_partitioner {
 	typedef auto_stack_partitioner<Return, T, Info, Body> partitioner;
 
-	/// Heartbeat: everything starts sequential; parallelism comes from promotions
 	static bool do_parallel(T& data) noexcept
     {
 		
 		return false;
 	}
 
-	/// Sequential branch: explicit private stack + periodic promotion (HeartBeat.h).
-	/// The parent is copied and popped BEFORE running the engine: promotions push into ss->stack,
-	/// which may grow (invalidating data) and would make a later ss_pop remove a promoted node.
-	/// If Info defines do_serial_func, the original do_it_serial path is kept (compile-time constant condition).
+	// copy and pop the parent first, promotions can resize ss->stack
 	template<typename R, typename SC>
 	static unsigned long long run_serial(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
 		if (internal_mpi::hb_has_do_serial_func<Info, T, R>::value) {
@@ -4262,7 +4247,6 @@ struct auto_stack_partitioner {
 		return internal_mpi::heartbeat_serial(std::move(parent), info, body, sc, ss);
 	}
 
-	/// GatherInput: the engine also copies the nodes it processes (ss_push_copy), like the main loop
 	template<typename R, typename SC>
 	static unsigned long long run_serial_gather(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
 		if (internal_mpi::hb_has_do_serial_func<Info, T, R>::value) {

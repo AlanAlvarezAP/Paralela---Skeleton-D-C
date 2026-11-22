@@ -82,8 +82,8 @@ struct DSParConfigInfo {
 	int threads_request_policy;
 	int mpi_workrequest_limits;
 	int trp_predict_workcount;
-	int hb_period_us;		// heartbeat period N in microseconds (only used by partitioner::automatic)
-	int hb_check_every;		// heartbeat: read the clock every hb_check_every nodes (only used by partitioner::automatic)
+	int hb_period_us;		// heartbeat period (us)
+	int hb_check_every;
 
 	DSParConfigInfo(const int _nthreads = dpr::UNDEFINED_PARAMETER, const int _chunksToSteal = dpr::UNDEFINED_PARAMETER, const int _polling_interval = dpr::UNDEFINED_PARAMETER, const int _initial_stack_size = dpr::UNDEFINED_PARAMETER, const int _threads_request_policy = dpr::UNDEFINED_PARAMETER, const int _mpi_workrequest_limits = dpr::UNDEFINED_PARAMETER, const int _trp_predict_workcount = dpr::UNDEFINED_PARAMETER, const int _hb_period_us = dpr::UNDEFINED_PARAMETER, const int _hb_check_every = dpr::UNDEFINED_PARAMETER) :
 		nthreads(_nthreads),
