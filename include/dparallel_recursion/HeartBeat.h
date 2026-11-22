@@ -3,13 +3,18 @@
 
 #include <deque>
 #include <utility>
+#include <chrono>
 #include "dparallel_recursion/seq_parallel_stack_recursion.h"
+
 
 
 namespace dpr
 {
     namespace internal_mpi
     {
+        const long long HB_DEFAULT_PERIOD  = 30;
+        const unsigned  HB_DEFAULT_CHECK_EVERY = 128;
+
         template<typename T> struct StealStack;
 
         template <typename TYPE>
@@ -48,12 +53,86 @@ namespace dpr
             std::deque<TYPE> data;
         };
         
-        class HBState // Esto no se si deberías hacerlo clase o struct tu decidelo
-        {
-            
+        struct HBConfig{
+            std::chrono::steady_clock::duration period;
+            unsigned int check_every;
+
+            HBConfig(): period(std::chrono::microseconds(HB_DEFAULT_PERIOD)),check_every(HB_DEFAULT_CHECK_EVERY){};
         };
 
-        // Igual aca deberían ir, hb_tick y hb_promote
+        inline HBConfig& hb_config(){
+            static thread_local HBConfig c;
+            return c;
+        }
+
+        class HBState{
+        public:
+            std::chrono::steady_clock::time_point t0;
+            unsigned int counter;
+            unsigned int poll_counter;
+            unsigned long long promotions;
+
+            HBState():t0(std::chrono::steady_clock::now()),counter(0),poll_counter(0),promotions(0){};
+        };
+
+        inline HBState& hb_thread_state(){
+            static thread_local HBState s;
+            return s;
+        }
+
+        inline bool hb_tick(HBState& st){
+            st.counter++;
+            if(st.counter < hb_config().check_every){
+                return false;
+            }
+            st.counter = 0;
+            return (std::chrono::steady_clock::now() - st.t0) >= hb_config().period;
+        }
+
+        template<class T, class SC>
+        void hb_promote(PrivateStack<T> & ps, SC& sc, StealStack<T>* ss, HBState &st){
+            if(!ps.can_promote()){
+                return;
+            }
+
+            int needed = sc.chunkSize - sc.ss_localDepth(ss);
+            if(needed < 1){
+                needed = 1;
+            }
+
+            for(int k = 0; k<needed && ps.can_promote(); k++){
+#ifndef DPR_DENY_STACK_RESIZE
+                while(ss->top + 1 > ss->stackSize){
+                    sc.ss_growStackSize(ss);
+                }
+#endif
+                sc.ss_push_simple(ss,ps.take_oldest());
+                st.promotions++;
+            }
+
+            st.t0 = std::chrono::steady_clock::now();
+            if(sc.ss_localDepth(ss) >= sc.chunkSize){
+                sc.ss_release(ss,sc.chunkSize * (sc.ss_localDepth(ss) / sc.chunkSize));
+                if(sc.num_total_procs > 1){
+                    sc.ws_make_progress(ss);
+                }else{
+                    SC::cbarrier_cancel();
+                }
+            }
+        }
+
+        template<class T, class SC>
+        inline void hb_step(PrivateStack<T> &ps, SC &sc, StealStack<T> *ss, HBState &st){
+            st.poll_counter++;
+            if(sc.num_total_procs > 1 && st.poll_counter >= sc.polling_interval){
+                st.poll_counter = 0;
+                sc.ws_make_progress(ss);
+            }
+
+            if(hb_tick(st)){
+                hb_promote(ps,sc,ss,st);
+            }
+        }
 
         template<class T, class Info>
         inline void push_children(PrivateStack<T>& in_stack, T& x, const Info& info)
@@ -68,7 +147,7 @@ namespace dpr
                                             Body& body, StackClass& sc, StealStack<T>* ss)
         {
             PrivateStack<T> stack;
-            HBState hb_state;
+            HBState &hb_state = hb_thread_state();
             unsigned long long nodes = 0;
 
             push_children(stack, parent, info);
@@ -91,8 +170,7 @@ namespace dpr
                     push_children(stack, x, info);
                 }
 
-                //if (hb_state.hb_tick(st)) // 
-                //    hb_state.hb_promote(pila, sc, ss, hb_state);
+                hb_step(stack, sc, ss, hb_state);
             }
 
             return nodes;
@@ -103,7 +181,7 @@ namespace dpr
                                             Body& body, StackClass& sc, StealStack<T>* ss)
         {
             PrivateStack<T> stack;
-            HBState hb_state;
+            HBState &hb_state = hb_thread_state();
             unsigned long long nodes = 0;
 
             push_children(stack, parent, info);
@@ -125,8 +203,7 @@ namespace dpr
                     push_children(stack, x, info);
                 }
 
-                // if (hb_state.hb_tick(hb_state))
-                //     hb_state.hb_promote(stack, sc, ss, hb_state);
+                hb_step(stack, sc, ss, hb_state);
             }
 
             return nodes;
