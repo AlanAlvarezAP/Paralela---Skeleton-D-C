@@ -1,11 +1,10 @@
 #!/bin/bash
-# monitor.sh - runs on n1: progress of run_experiments.sh and CPU of the benchmark on every node.
-# usage (from the PC, refresh every 5 s): ssh -t root@N1 "watch -n 5 bash ~/cluster/monitor.sh"
+# uso: ssh -t root@N1 "watch -n 5 bash ~/cluster/monitor.sh"
+
 CSV=$(ls -t ~/skeleton/resultados_compare_*.csv ~/skeleton/resultados_hb_*.csv 2>/dev/null | head -1)
 total=$(grep -o '[0-9]* runs' ~/EXPECTED_RUNS 2>/dev/null | cut -d' ' -f1)
 done_runs=0
 [ -n "$CSV" ] && done_runs=$(( $(wc -l < "$CSV") - 1 ))
-# run_hb.py counts tau + nodes together in ~/DONE_RUNS (the CSV only has the current phase)
 [ -f ~/DONE_RUNS ] && done_runs=$(cat ~/DONE_RUNS)
 echo "$(basename "${CSV:-none}"): $done_runs / ${total:-?} runs   $(date -u +%H:%M:%S) UTC   RUN_DONE: $(cat ~/RUN_DONE 2>/dev/null || echo running)"
 echo

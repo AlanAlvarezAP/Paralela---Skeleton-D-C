@@ -1,5 +1,0 @@
-# private: real IPs and the cluster private key
-nodes.txt
-id_cluster
-id_cluster.pub
-setup_all.sh

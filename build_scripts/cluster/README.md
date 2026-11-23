@@ -10,8 +10,9 @@ Heartbeat experiments with `build_scripts/run_hb.py`. They only automate the set
 | `run_experiments.sh` | n1, inside tmux | Default phase `hb` = `run_hb.py` (tau, then nodes). Packs `~/resultados_hb.tar.gz` and writes the exit code to `~/RUN_DONE`. |
 | `monitor.sh` | n1 | Progress (`done / total` of the whole run), last rows of the CSV and benchmark CPU on every node. |
 | `nodes.txt.example` | — | Template for `nodes.txt`: one public IP per line, n1 first. |
+| `wait_done.ps1` | PC (PowerShell) | Polls n1 every 60 s, prints progress and alerts (beep, Windows notification, message box) when `~/RUN_DONE` appears. `-DownloadTo <folder>` also downloads and unpacks `resultados_hb.tar.gz` (never overwrites). Usage: `powershell -ExecutionPolicy Bypass -File build_scripts\cluster\wait_done.ps1 -N1 $N1 -DownloadTo ..\cluster_hb3` |
 
-Not in git (see `.gitignore`): `nodes.txt` (real IPs) and `id_cluster` (private key that opens every node).
+Not in git (see the `.gitignore` at the repo root): `nodes.txt` (real IPs) and `id_cluster` (private key that opens every node).
 
 ## Experiment design (default: 24 runs)
 
@@ -76,11 +77,35 @@ scp -i $K "root@${N1}:~/resultados_hb.tar.gz" .
 `run_experiments.sh` uses `~/cluster/run_hb.py` if it was uploaded, otherwise the one of the cloned branch.
 Then delete the instances (with their IPs and volumes) so they stop billing.
 
+## Extra phase (`PHASES=extra`, 40 runs, no tau)
+
+What the 24-run campaign left out. Each part writes its own files (`resultados_hb_nodes_<tag>.csv`,
+`logs_hb_nodes_<tag>/`, `resumen_hb_nodes_<tag>.txt`):
+
+| Tag | Runs | What |
+|---|---|---|
+| `topsorts` | 2 × 4 nodes = 8 | topsorts pm22: `simple` (topsorts has no custom version: its `do_parallel` is commented out) + `automatic` N=3 again |
+| `fib_reps` | 4 nodes × 4 reps = 16 | fib(52): only `automatic` N=1, 4 reps (`FIB_REPS`) to average |
+| `t3xxl_stack` | 4 × 4 nodes = 16 | UTS T3XXL: `simple` + `custom` 1, 5, 15 with `ulimit -s 1048576` (1 GB stack per thread, `STACK_KB`) |
+
+Why `t3xxl_stack`: with `custom`, every node with height ≥ cutoff is solved by native recursion
+(`do_it_serial`); T3XXL is ~99 000 levels deep and a `std::thread` gets the default 8 MB stack, so every
+cutoff dies with signal 11 after ~40 s. glibc takes the thread stack size from `RLIMIT_STACK`, so raising it
+should let `custom` finish. If it does, the stack overflow is confirmed as the cause.
+
+```powershell
+ssh -i $K root@$N1 "tmux new -d -s run 'PHASES=extra bash ~/cluster/run_experiments.sh > ~/compare.out 2>&1'"
+```
+
+New `run_hb.py` options used by this phase: `OUT_TAG` (file suffix), `AUTOMATIC=0` (baselines only) and
+`STACK_KB` (thread stack, KB).
+
 ## Options
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PHASES` | `hb` | also `smoke`, `tau`, `full` (old `run_compare.py` campaign with simple/custom) |
+| `PHASES` | `hb` | also `extra` (see above), `smoke`, `tau`, `full` (old `run_compare.py` campaign with simple/custom) |
+| `FIB_REPS`, `STACK_KB` | `4`, `1048576` | reps of fib and thread stack (KB) of T3XXL in the extra phase |
 | `HB_MODE` | `all` | `tau`, `nodes` (reuses `tau_N.json`) or `all` |
 | `HB_REPS` | `1` | reps of phase nodes |
 | `PACK` | `1` | `1`: runs on different nodes at the same time; `0`: one run at a time |

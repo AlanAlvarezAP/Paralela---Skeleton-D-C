@@ -1,39 +1,12 @@
-# run_hb.py - mide tau de cada benchmark, calcula su N y barre 1..4 nodos con ese N.
-#
-#   Fase "tau"   (1 nodo, 1 hilo, partitioner automatico, entradas reducidas de la misma familia):
-#       T  = tiempo con N = 1e9 us   (0 promociones)
-#       T' = tiempo con N = 1 us     (C promociones)
-#       tau = (T' - T) / C           ->   N = ceil(K * tau)  con K = 20  (=> sobrecosto ~ 1/K = 5 %)
-#       Las dos corridas usan DPR_HB_CHECK_EVERY = TAU_CHECK (1 por defecto): el costo de leer el reloj
-#       queda en T y en T' por igual y se cancela en la resta; solo queda el costo de promover.
-#       Se toma la mediana de TAU_REPS repeticiones. Guarda tau_N.json y resultados_hb_tau.csv.
-#
-#   Fase "nodes" (1..4 nodos, 8 hilos por nodo, entradas grandes):
-#       automatic con el N propio de cada benchmark (+ lineas base opcionales, por defecto ninguna).
-#       Guarda resultados_hb_nodes.csv y una tabla con medianas y speedup respecto a 1 nodo.
-#
-# por defecto (4 tests, 4 nodos): tau 4 x 2 = 8 corridas + nodes 4 x 4 = 16 corridas = 24
-#
-# uso:   MODE=tau|nodes|all python3 build_scripts/run_hb.py [nodos] [reps]
-#        nodos = "1,2,3,4" (por defecto: 1..lineas de hosts), reps = 1
-# env:   TESTS=fib,uts_T3XXL,uts_T2XL,topsorts   K=20   TAU_REPS=1   TAU_CHECK=1   N_FALLBACK=30
-#        BASELINES=none              (simple, custom_good, custom_bad ... separados por coma; "none" = solo automatic)
-#        HB_CHECK_EVERY=128          (check_every de la fase nodes)
-#        N_fib=.. N_uts_T3XXL=.. ... (fuerza el N de un benchmark y no usa el de tau_N.json)
-#        FIB_N=52  TOPSORTS_INPUT=pm22 (o cat42)  TIMEOUT  N_THREADS=8  SKEL=~/skeleton  DRY_RUN=1
-#        PACK=1                      (1: corridas en nodos distintos van a la vez; 0: una a la vez)
-#
-# PACK=1 (por defecto) reparte los nodos de hosts entre corridas simultaneas, sin compartir nunca un nodo:
-#   tau:   cada benchmark (sus pasadas T y T', en el mismo nodo y una tras otra) en un nodo distinto,
-#          los 4 benchmarks a la vez.
-#   nodes: primero las de 4 nodos; despues las de 3 junto con una de 1; las de 2 de a dos; etc.
-#   El CSV guarda en que hosts corrio cada una y cuando empezo y termino.
+# Mide tau por benchmark y corre automatic en 1..4 nodos con ese N.
+# uso: MODE=tau|nodes|all python3 build_scripts/run_hb.py [nodos] [reps]
 
 import csv
 import json
 import math
 import os
 import re
+import shlex
 import signal
 import statistics
 import subprocess
@@ -54,7 +27,7 @@ K = float(os.environ.get("K", "20"))
 TAU_REPS = int(os.environ.get("TAU_REPS", "1"))
 TAU_CHECK = int(os.environ.get("TAU_CHECK", "1"))
 N_FALLBACK = int(os.environ.get("N_FALLBACK", "30"))
-N_BIG = 1000000000          # cabe en un int: ninguna corrida llega a 1000 s, asi que 0 promociones
+N_BIG = 1000000000
 N_SMALL = 1
 N_THREADS = int(os.environ.get("N_THREADS", "8"))
 HB_CHECK_EVERY = int(os.environ.get("HB_CHECK_EVERY", "128"))
@@ -62,15 +35,19 @@ FIB_N = int(os.environ.get("FIB_N", "52"))
 TOPSORTS_INPUT = os.environ.get("TOPSORTS_INPUT", "pm22")
 BASELINES = [b for b in os.environ.get("BASELINES", "none").split(",") if b and b != "none"]
 SKEL = os.path.expanduser(os.environ.get("SKEL", "~/skeleton"))
-# PACK=1: corre a la vez trabajos que usan nodos distintos (ver run_jobs); PACK=0: uno a la vez
 PACK = os.environ.get("PACK", "1") == "1"
-LOCK = threading.Lock()                          # CSV, prints y contadores compartidos entre hilos
+OUT_TAG = os.environ.get("OUT_TAG", "")
+SFX = "_" + OUT_TAG if OUT_TAG else ""
+AUTOMATIC = os.environ.get("AUTOMATIC", "1") == "1"
+STACK_KB = os.environ.get("STACK_KB", "")
+if STACK_KB and not STACK_KB.isdigit():
+    sys.exit("STACK_KB debe ser un entero (KB)")
+LOCK = threading.Lock()
 
 TESTS_WANTED = os.environ.get("TESTS", "fib,uts_T3XXL,uts_T2XL,topsorts").split(",")
 
 T3XXL = "-t 0 -b 2000 -q 0.499995 -m 2 -r 316"
 T2XL = "-t 1 -a 2 -d 26 -b 7 -r 220"
-# misma familia de arbol, pero ~10-25 s con 1 hilo (el tamano grande con 1 hilo tarda demasiado)
 T3_TAU = "-t 0 -b 2000 -q 0.4999 -m 2 -r 316"
 T2_TAU = "-t 1 -a 2 -d 20 -b 7 -r 220"
 TOPS = "sequential/inputs/topsorts/%s.txt"
@@ -80,7 +57,6 @@ def opt(c, fmt):
     return "" if c is None else fmt % c
 
 
-# p = codigo de partitioner, c = cutoff (custom) o None
 BENCH = {
     "fib": {
         "codes": {"simple": 0, "custom": 1, "automatic": 2},
@@ -101,7 +77,7 @@ BENCH = {
         "big": (lambda p, c: "./bin/uts_dstack %s -P %d%s" % (T2XL, p, opt(c, " -U %d")), None, "T2XL"),
     },
     "topsorts": {
-        "codes": {"simple": 0, "automatic": 2},          # no tiene version custom
+        "codes": {"simple": 0, "automatic": 2},
         "cutoffs": {},
         "tau": (lambda p, c: "./bin/topsorts_dstack 4 1 0 0 100 %d" % p, TOPS % "pm18", "pm18"),
         "big": (lambda p, c: "./bin/topsorts_dstack 4 1 0 0 100 %d" % p, TOPS % TOPSORTS_INPUT, TOPSORTS_INPUT),
@@ -149,11 +125,6 @@ def write_hostfile(lines, tag):
 
 
 def run_jobs(jobs):
-    """Ejecuta los trabajos repartiendo los nodos del archivo hosts.
-    jobs = lista de dicts {"nodes": n, "tag": str, "fn": fn(hostfile, host_names)}.
-    PACK=1: arranca, en el orden de la lista, el primer trabajo que quepa en los nodos libres (los que
-    sobran de un trabajo grande los usa otro mas chico al mismo tiempo; nunca comparten un nodo).
-    PACK=0: un trabajo a la vez sobre los primeros nodos, como antes."""
     hosts = all_hosts()
     for j in jobs:
         if j["nodes"] > len(hosts):
@@ -168,12 +139,12 @@ def run_jobs(jobs):
         names = [hosts[i].split()[0] for i in idx]
         try:
             job["fn"](write_hostfile([hosts[i] for i in idx], job["tag"]), names)
-        except Exception as e:                   # no deja nodos tomados si algo falla en Python
+        except Exception as e:
             errors.append("%s: excepcion %r" % (job["tag"], e))
         finally:
             with cond:
                 free.extend(idx)
-                free.sort()                      # n1 primero
+                free.sort()
                 state["running"] -= 1
                 cond.notify_all()
 
@@ -196,7 +167,6 @@ def run_jobs(jobs):
 
 
 def run(n, threads, command, stdin_path, period, check, log_dir, tag, timeout, hostfile="hosts_tmp"):
-    """Una corrida con mpirun. Devuelve dict con tiempos, promociones, resultado y estado."""
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), DPR_HB_STATS="1")
     exports = "-x OMP_NUM_THREADS -x DPR_HB_STATS"
     env.pop("DPR_HB_PERIOD_US", None)
@@ -205,18 +175,20 @@ def run(n, threads, command, stdin_path, period, check, log_dir, tag, timeout, h
         env["DPR_HB_PERIOD_US"] = str(period)
         env["DPR_HB_CHECK_EVERY"] = str(check)
         exports += " -x DPR_HB_PERIOD_US -x DPR_HB_CHECK_EVERY"
+    if STACK_KB:
+        command = "bash -c 'ulimit -s %s && exec %s'" % (STACK_KB, command)
     cmd = ("mpirun --allow-run-as-root -np %d --hostfile %s --map-by ppr:1:node --bind-to none "
            "--mca btl_tcp_if_exclude lo,docker0 %s %s" % (n, hostfile, exports, command))
     if DRY_RUN:
         with LOCK:
             print("   ", ("DPR_HB_PERIOD_US=%s DPR_HB_CHECK_EVERY=%s " % (period, check) if period else "") + cmd
                   + (" < " + stdin_path if stdin_path else ""))
-        time.sleep(0.2 / n)                      # duracion ficticia: muestra como se reparten los nodos
+        time.sleep(0.2 / n)
         return {"wall": 0, "bench": 1.0, "prom": 0, "res": "dry", "state": "ok"}
     stdin = open(stdin_path) if stdin_path else subprocess.DEVNULL
     start = time.time()
     try:
-        proc = subprocess.run(cmd.split(), env=env, stdin=stdin, stdout=subprocess.PIPE,
+        proc = subprocess.run(shlex.split(cmd), env=env, stdin=stdin, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, timeout=timeout)
         text = proc.stdout.decode(errors="replace")
         state = "ok" if proc.returncode == 0 else "error_%d" % proc.returncode
@@ -232,11 +204,10 @@ def run(n, threads, command, stdin_path, period, check, log_dir, tag, timeout, h
 
 
 PROGRESS = {"done": 0}
-JOB_ERRORS = []                                  # excepciones de Python dentro de un trabajo (run_jobs)
+JOB_ERRORS = []
 
 
 def expected(total, phase):
-    # monitor.sh lee "<n> runs" de ~/EXPECTED_RUNS y el avance de ~/DONE_RUNS (total de toda la llamada)
     print("%d runs (%s)" % (total, phase))
     if not DRY_RUN:
         open(os.path.expanduser("~/EXPECTED_RUNS"), "w").write("%d runs (%s)\n" % (total, phase))
@@ -249,7 +220,6 @@ def progress():
         open(os.path.expanduser("~/DONE_RUNS"), "w").write("%d\n" % PROGRESS["done"])
 
 
-# --------------------------------------------------------------------------------------------- tau
 def phase_tau():
     print("\n######## FASE TAU: 1 nodo, 1 hilo, check_every=%d, %d reps, N_grande=%d us vs N=%d us, K=%g"
           % (TAU_CHECK, TAU_REPS, N_BIG, N_SMALL, K))
@@ -271,7 +241,6 @@ def phase_tau():
         d = data[name]
 
         def fn(hostfile, names):
-            # T y T' del mismo benchmark: mismo nodo, una tras otra (intercaladas si TAU_REPS > 1)
             for rep in range(TAU_REPS):
                 for period in (N_BIG, N_SMALL):
                     tag = "%s_tau_N%d_r%d" % (name, period, rep)
@@ -315,7 +284,6 @@ def phase_tau():
                 tau_us = (Tp - T) / C * 1e6
                 N = max(1, int(math.ceil(K * tau_us)))
                 entry.update({"tau_ns": round(tau_us * 1000, 2), "N_us": N, "fallback": False})
-                # que tan confiable es: diferencia T'-T comparada con la dispersion de T
                 spread = (max(times[N_BIG]) - min(times[N_BIG])) if len(times[N_BIG]) > 1 else 0.0
                 entry["diff_s"] = round(Tp - T, 4)
                 entry["spread_T_s"] = round(spread, 4)
@@ -349,9 +317,10 @@ def fmt(x):
     return "-" if x is None else "%.3f" % x
 
 
-# --------------------------------------------------------------------------------------------- nodes
 def periods_for_nodes(summary):
     periods = {}
+    if not AUTOMATIC:
+        return periods
     for name in TESTS:
         forced = os.environ.get("N_" + name)
         if forced:
@@ -366,7 +335,7 @@ def periods_for_nodes(summary):
 
 
 def build_plan(periods):
-    plan = []          # (test, config, partitioner, cutoff, period)
+    plan = []
     for name in TESTS:
         b = BENCH[name]
         for base in BASELINES:
@@ -374,7 +343,8 @@ def build_plan(periods):
                 plan.append((name, "simple", "simple", None, None))
             elif base in b["cutoffs"] and "custom" in b["codes"]:
                 plan.append((name, base, "custom", b["cutoffs"][base], None))
-        plan.append((name, "automatic", "automatic", None, periods.get(name)))
+        if AUTOMATIC:
+            plan.append((name, "automatic", "automatic", None, periods.get(name)))
     return plan
 
 
@@ -389,7 +359,7 @@ def nodes_runs(nodes_list, reps):
 def phase_nodes(summary, nodes_list, reps):
     periods = periods_for_nodes(summary)
     timeout = int(os.environ.get("TIMEOUT", "2400"))
-    log_dir = "logs_hb_nodes"
+    log_dir = "logs_hb_nodes" + SFX
     os.makedirs(log_dir, exist_ok=True)
 
     plan = build_plan(periods)
@@ -397,13 +367,14 @@ def phase_nodes(summary, nodes_list, reps):
     total = len(plan) * len(nodes_list) * reps
     print("\n######## FASE NODES: nodos=%s, %d hilos/nodo, %d reps, check_every=%d -> %d corridas"
           % (",".join(map(str, nodes_list)), N_THREADS, reps, HB_CHECK_EVERY, total))
-    print("N por benchmark: " + ", ".join("%s=%d us" % kv for kv in periods.items()))
+    print("N por benchmark: " + (", ".join("%s=%d us" % kv for kv in periods.items()) or "- (sin automatic)")
+          + ("   pila por hilo: %s KB" % STACK_KB if STACK_KB else ""))
 
-    out = open("resultados_hb_nodes.csv", "w", newline="")
+    out = open("resultados_hb_nodes%s.csv" % SFX, "w", newline="")
     w = csv.writer(out)
     w.writerow(["nodos", "threads", "test", "entrada", "config", "partitioner", "cutoff", "hb_period_us",
                 "hb_check_every", "rep", "tiempo_wall_s", "tiempo_bench_s", "promociones", "resultado", "estado",
-                "hosts", "inicio_s", "fin_s"])
+                "hosts", "inicio_s", "fin_s", "stack_kb"])
     times, results, problems = {}, {}, []
     counter = {"done": 0}
     t0 = time.time()
@@ -422,7 +393,7 @@ def phase_nodes(summary, nodes_list, reps):
                 w.writerow([n, N_THREADS, name, label, config, part, opt(cutoff, "%d"), opt(period, "%d"),
                             HB_CHECK_EVERY if period else "", rep, r["wall"], r["bench"],
                             r["prom"] if part == "automatic" else "", r["res"], r["state"],
-                            " ".join(names), round(start, 1), round(time.time() - t0, 1)])
+                            " ".join(names), round(start, 1), round(time.time() - t0, 1), STACK_KB])
                 out.flush()
                 print("[%d/%d] %s bench=%s wall=%s prom=%s res=%s %s  [%s]"
                       % (counter["done"], total, tag, r["bench"], r["wall"],
@@ -439,12 +410,11 @@ def phase_nodes(summary, nodes_list, reps):
         return {"nodes": n, "tag": tag, "fn": fn}
 
     jobs = []
-    for rep in range(reps):                     # rep por fuera: si se corta, hay datos de todos los nodos
+    for rep in range(reps):
         for n in nodes_list:
             for name, config, part, cutoff, period in plan:
                 jobs.append(make_job(rep, n, name, config, part, cutoff, period))
     if PACK:
-        # las mas grandes primero; los nodos que dejan libres los toman las mas chicas (sort estable: rep y test en orden)
         jobs.sort(key=lambda j: (-j["nodes"],))
     JOB_ERRORS.extend(run_jobs(jobs))
     out.close()
@@ -454,7 +424,6 @@ def phase_nodes(summary, nodes_list, reps):
         if len(res) > 1:
             problems.append("%s: las configuraciones dan resultados distintos: %s" % (name, sorted(res)))
 
-    # tabla: mediana por (test, config, nodos), speedup vs 1 nodo y automatic vs cada linea base
     lines = []
     lines.append("%-11s %-18s" % ("test", "config") + "".join("%11s" % ("%d nodo%s" % (n, "s" if n > 1 else ""))
                                                        for n in nodes_list))
@@ -487,13 +456,12 @@ def phase_nodes(summary, nodes_list, reps):
     table = "\n".join(lines)
     print("\n" + table)
     if not DRY_RUN:
-        open("resumen_hb_nodes.txt", "w").write(
+        open("resumen_hb_nodes%s.txt" % SFX, "w").write(
             "N por benchmark: " + json.dumps(periods) + "\n\n" + table + "\n")
-    print("\nresultados_hb_nodes.csv, resumen_hb_nodes.txt, %s/" % log_dir)
+    print("\nresultados_hb_nodes%s.csv, resumen_hb_nodes%s.txt, %s/" % (SFX, SFX, log_dir))
     return problems
 
 
-# --------------------------------------------------------------------------------------------- main
 if os.path.isdir(SKEL):
     os.chdir(SKEL)
 elif not DRY_RUN:

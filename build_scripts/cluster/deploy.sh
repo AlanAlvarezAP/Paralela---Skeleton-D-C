@@ -1,8 +1,7 @@
 #!/bin/bash
-# deploy.sh - runs on n1 (the first node). Sends setup_all.sh to every node, builds there in parallel,
-# writes ~/skeleton/hosts and checks that mpirun reaches every node.
-# Needs in the same folder: nodes.txt (one IP per line, n1 first) and id_cluster (private key that opens every node).
-# usage: BRANCH=develop bash deploy.sh > ~/deploy.log 2>&1
+# Corre en n1: compila en todos los nodos y arma ~/skeleton/hosts.
+# uso: BRANCH=develop bash deploy.sh > ~/deploy.log 2>&1
+
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 cd "$HERE"
@@ -10,7 +9,6 @@ BRANCH=${BRANCH:-develop}
 SETUP=$HERE/setup_all.sh
 [ -f "$SETUP" ] || SETUP=$HERE/../setup_all.sh
 [ -f "$SETUP" ] || { echo "ERROR: setup_all.sh not found next to deploy.sh"; exit 1; }
-# parche opcional: hb_fix.patch junto a deploy.sh o junto a setup_all.sh (se aplica en cada nodo)
 PATCH=""
 for f in "$HERE/hb_fix.patch" "$(dirname "$SETUP")/hb_fix.patch"; do [ -f "$f" ] && { PATCH=$f; break; }; done
 [ -f nodes.txt ] || { echo "ERROR: nodes.txt missing (copy nodes.txt.example and write the IPs)"; exit 1; }
