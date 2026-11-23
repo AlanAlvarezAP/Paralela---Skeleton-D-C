@@ -290,8 +290,9 @@ struct StealStack {
 	std::vector<T> baseInputStack;                   /* addr of actual stack of copied base-nodes in local addr space  (only used with GatherInput), 24 bytes */
 	char falseSharingPadding3[64*(sizeof(std::vector<T>)/64+1)-sizeof(std::vector<T>)];                    /* 10*4=40 bytes padding */
 	//////////// 64 bytes ////////////
+	volatile int hbActive;                           /* 1 while the thread runs heartbeat_serial */
 #ifdef PROFILE
-	int nLeaves;                                     /* tree stats, 4 bytes */
+	int nLeaves;                                    /* tree stats, 4 bytes */
 	int maxStackDepth;                               /* stack stats, 4 bytes */
 	int nAcquire, nRelease, nSteal, nFail;           /* steal stats, 4*4=16 bytes */
 	int wakeups, falseWakeups;                       /* 4*2=8 bytes */
@@ -303,6 +304,21 @@ struct StealStack {
 	int entries[DPR_SS_NSTATES], curState;           /* 4*5+4=24 bytes */
 	//////////// 64 bytes ////////////
 #endif
+};
+
+// marks the stack as busy while heartbeat_serial runs, so termination detection
+// and remote work delivery do not treat the thread as idle
+template<typename T>
+struct HBActiveGuard {
+	StealStack<T>* const s;
+	explicit HBActiveGuard(StealStack<T>* _s) : s(_s) {
+		s->hbActive = 1;
+		std::atomic_thread_fence(std::memory_order_seq_cst);
+	}
+	~HBActiveGuard() {
+		std::atomic_thread_fence(std::memory_order_seq_cst);
+		s->hbActive = 0;
+	}
 };
 
 template<typename T, typename Info>
@@ -1234,6 +1250,7 @@ public:
 		s->stackSize = nelts;
 		s->nNodes = 0;
 		s->statusJobSearch = 0;
+		s->hbActive = 0;
 		if (behavior & GatherInput) {
 			s->baseInputStack.resize(nelts);
 			s->baseInputStackSize = nelts;
@@ -1564,8 +1581,9 @@ public:
 	}
 
 	/* local full depth */
-	static constexpr int ss_localFullDepth(const internal_mpi::StealStack<T> *s) {
-		return (s->top - s->sharedStart);
+	// a thread inside heartbeat_serial has work in its private stack, so it counts as not empty
+	static inline int ss_localFullDepth(const internal_mpi::StealStack<T> *s) {
+		return (s->top - s->sharedStart) + s->hbActive;
 	}
 
 	/* shared depth */
@@ -2544,7 +2562,19 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								Partitioner::run_serial_gather(r, data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									Partitioner::run_serial_gather(r, data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -2656,7 +2686,19 @@ public:
 								body.post(body.non_base(*data), r);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								Partitioner::run_serial(r, data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									Partitioner::run_serial(r, data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -2833,7 +2875,19 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								ss->nNodes += Partitioner::run_serial_gather(r, data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									ss->nNodes += Partitioner::run_serial_gather(r, data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -2960,7 +3014,19 @@ public:
 								body.post(body.non_base(*data), r);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								ss->nNodes += Partitioner::run_serial(r, data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									ss->nNodes += Partitioner::run_serial(r, data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<Return, T, Info, Body, Info::NumChildren>::do_it_serial(r, info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -3620,7 +3686,19 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								Partitioner::run_serial_gather_void(data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									Partitioner::run_serial_gather_void(data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -3732,7 +3810,19 @@ public:
 								body.non_base(*data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								Partitioner::run_serial_void(data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									Partitioner::run_serial_void(data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -3906,7 +3996,19 @@ public:
 								threadParStackClass.ss_push_copy(ss, *data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								ss->nNodes += Partitioner::run_serial_gather_void(data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									ss->nNodes += Partitioner::run_serial_gather_void(data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -4032,7 +4134,19 @@ public:
 								body.non_base(*data);
 							}
 							if (!Partitioner::do_parallel(*data))  {
-								ss->nNodes += Partitioner::run_serial_void(data, info, body, threadParStackClass, ss);
+								if (Partitioner::heartbeat) {
+									ss->nNodes += Partitioner::run_serial_void(data, info, body, threadParStackClass, ss);
+								} else {
+									const int numChildren = info.num_children(*data);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+									for (int i = numChildren-1; i >= 0; --i) {
+#else
+									for (int i = 0; i < numChildren; ++i) {
+#endif
+										internal::do_it_serial_stack_struct<void, T, Info, Body, Info::NumChildren>::do_it_serial(info.child(i, *data), info, body);
+									}
+									threadParStackClass.ss_pop(ss);
+								}
 							} else {
 								const int numChildren = info.num_children(*data);
 								if (numChildren > 0) {
@@ -4160,8 +4274,12 @@ public:
 };
 
 // original serial branch, used by simple and custom
+// heartbeat == false: run_thread keeps the original inline loop, moving it into a
+// function made the serial recursion of fib ~2.7x slower
 template<typename Return, typename T, typename Info, typename Body>
 struct native_serial_stack_partitioner {
+
+	static constexpr bool heartbeat = false;
 
 	template<typename R, typename SC>
 	static unsigned long long run_serial(R& r, T* data, const Info& info, Body& body, SC& sc, internal_mpi::StealStack<T>* ss) {
@@ -4220,6 +4338,8 @@ template<typename Return, typename T, typename Info, typename Body>
 struct auto_stack_partitioner {
 	typedef auto_stack_partitioner<Return, T, Info, Body> partitioner;
 
+	static constexpr bool heartbeat = true;
+
 	static bool do_parallel(T& data) noexcept
     {
 		
@@ -4232,6 +4352,7 @@ struct auto_stack_partitioner {
 		if (internal_mpi::hb_has_do_serial_func<Info, T, R>::value) {
 			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial(r, data, info, body, sc, ss);
 		}
+		internal_mpi::HBActiveGuard<T> hbActive(ss);
 		T parent = *data;
 		sc.ss_pop(ss);
 		return internal_mpi::heartbeat_serial(r, std::move(parent), info, body, sc, ss);
@@ -4242,6 +4363,7 @@ struct auto_stack_partitioner {
 		if (internal_mpi::hb_has_do_serial_func_void<Info, T>::value) {
 			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial_void(data, info, body, sc, ss);
 		}
+		internal_mpi::HBActiveGuard<T> hbActive(ss);
 		T parent = *data;
 		sc.ss_pop(ss);
 		return internal_mpi::heartbeat_serial(std::move(parent), info, body, sc, ss);
@@ -4252,6 +4374,7 @@ struct auto_stack_partitioner {
 		if (internal_mpi::hb_has_do_serial_func<Info, T, R>::value) {
 			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial_gather(r, data, info, body, sc, ss);
 		}
+		internal_mpi::HBActiveGuard<T> hbActive(ss);
 		T parent = *data;
 		sc.ss_pop(ss);
 		return internal_mpi::heartbeat_serial(r, std::move(parent), info, body, sc, ss, internal_mpi::hb_copy_input());
@@ -4262,6 +4385,7 @@ struct auto_stack_partitioner {
 		if (internal_mpi::hb_has_do_serial_func_void<Info, T>::value) {
 			return native_serial_stack_partitioner<Return, T, Info, Body>::run_serial_gather_void(data, info, body, sc, ss);
 		}
+		internal_mpi::HBActiveGuard<T> hbActive(ss);
 		T parent = *data;
 		sc.ss_pop(ss);
 		return internal_mpi::heartbeat_serial(std::move(parent), info, body, sc, ss, internal_mpi::hb_copy_input());
