@@ -2,6 +2,8 @@
 #define HEART_BEAT_H
 
 #include <deque>
+#include <algorithm>
+#include <vector>
 #include <utility>
 #include <chrono>
 #include <type_traits>
@@ -43,43 +45,46 @@ namespace dpr
         class PrivateStack
         {
         public:
-            PrivateStack():
-                data()
-            {}
-        
-            void push(TYPE&& in_value)
+            PrivateStack(): data(), bottom(0) { data.reserve(256); }
+
+            void push(TYPE&& v)
             {
-                data.push_back(std::move(in_value));
+                data.push_back(std::move(v));
+            }
+            void push(const TYPE& v)
+            {
+                data.push_back(v);
             }
 
-            void push(const TYPE& in_value)
-            {
-                data.push_back(in_value);
-            }
-        
             TYPE pop()
             {
                 TYPE x = std::move(data.back());
                 data.pop_back();
-        
+                if (data.size() == bottom)
+                {
+                    data.clear();
+                    bottom = 0;
+                }
                 return x;
             }
-        
+
             TYPE take_oldest()
             {
-                TYPE x = std::move(data.front());
-                data.pop_front();
-        
+                TYPE x = std::move(data[bottom++]);
+                if (bottom >= 64 && bottom * 2 >= data.size())
+                {
+                    data.erase(data.begin(), data.begin() + bottom);
+                    bottom = 0;
+                }
                 return x;
             }
-        
-            bool can_promote() const { return data.size() >= 2; }
 
-            bool empty() const { return data.empty(); }
-
-            std::size_t size() const { return data.size(); }
+            bool can_promote() const { return data.size() - bottom >= 2; }
+            bool empty() const { return data.size() == bottom; }
+            std::size_t size() const { return data.size() - bottom; }
         private:
-            std::deque<TYPE> data;
+            std::vector<TYPE> data;
+            std::size_t bottom;
         };
         
         struct HBConfig{
@@ -146,7 +151,6 @@ namespace dpr
             st.t0 = std::chrono::steady_clock::now();
             if(sc.ss_localDepth(ss) >= sc.chunkSize){
                 sc.ss_release(ss,sc.chunkSize * (sc.ss_localDepth(ss) / sc.chunkSize));
-                // same as releaseMultipleNodes
                 if(sc.num_total_procs > 1){
 #ifndef DPR_USE_REGULAR_POLLING_INTERVAL
                     if(ss->polling_count % sc.polling_interval == 0){
@@ -161,9 +165,9 @@ namespace dpr
         }
 
         template<class T, class SC>
-        inline void hb_step(PrivateStack<T> &ps, SC &sc, StealStack<T> *ss, HBState &st){
-            st.poll_counter++;
-            if(sc.num_total_procs > 1 && st.poll_counter >= sc.polling_interval){
+        inline void hb_step(PrivateStack<T> &ps, SC &sc, StealStack<T> *ss, HBState &st)
+        {
+            if(sc.num_total_procs > 1 && ++st.poll_counter >= std::max<unsigned>(sc.polling_interval, hb_config().check_every)){
                 st.poll_counter = 0;
                 sc.ws_make_progress(ss);
             }
@@ -171,18 +175,6 @@ namespace dpr
             if(hb_tick(st)){
                 hb_promote(ps,sc,ss,st);
             }
-        }
-
-        template<class T, class Info>
-        inline void push_children(PrivateStack<T>& in_stack, T& x, const Info& info)
-        {
-            const int n = info.num_children(x);
-#ifdef DPR_FORCE_ORDER_R_TO_L
-            for (int i = 0; i < n; ++i)
-#else
-            for (int i = n - 1; i >= 0; --i)
-#endif
-                in_stack.push(info.child(i, x));
         }
 
         // GatherInput needs a copy of the processed nodes
@@ -196,6 +188,32 @@ namespace dpr
             static void copy(SC& sc, StealStack<T>* ss, const T& x) { sc.ss_push_copy(ss, x); }
         };
 
+        template<class CopyInput, class T, class Info, class Body, class SC, class LeafFn>
+        inline unsigned long long hb_expand(PrivateStack<T>& stack, T& px, const Info& info,
+                                            Body& body, SC& sc, StealStack<T>* ss, LeafFn on_leaf)
+        {
+            unsigned long long leaves = 0;
+            const int nc = info.num_children(px);
+#ifdef DPR_FORCE_ORDER_R_TO_L
+            for (int i = 0; i < nc; ++i)
+#else
+            for (int i = nc - 1; i >= 0; --i)
+#endif
+            {
+                T c = info.child(i, px);
+                body.pre(c);
+                if (info.is_base(c))
+                {
+                    leaves++;
+                    on_leaf(c);
+                    CopyInput::copy(sc, ss, c);
+                }
+                else
+                    stack.push(std::move(c));
+            }
+            return leaves;
+        }
+
         template<class Return, class T, class Info, class Body, class StackClass, class CopyInput = hb_no_copy_input>
         unsigned long long heartbeat_serial(Return& r, T parent, const Info& info,
                                             Body& body, StackClass& sc, StealStack<T>* ss,
@@ -203,34 +221,21 @@ namespace dpr
         {
             PrivateStack<T> stack;
             HBState &hb_state = hb_thread_state();
-            unsigned long long nodes = 0;
+            auto on_leaf = [&](T& c) { body.post(body.base(c), r); };
 
-            push_children(stack, parent, info);
+            unsigned long long nodes = hb_expand<CopyInput>(stack, parent, info, body, sc, ss, on_leaf);
 
             while (!stack.empty())
             {
                 T x = stack.pop();
-
-                body.pre(x);
                 nodes++;
-
-                if (info.is_base(x))
+                body.pre_rec(x);
+                if (body.processNonBase)
                 {
-                    body.post(body.base(x), r);
+                    body.post(body.non_base(x), r);
                     CopyInput::copy(sc, ss, x);
                 }
-                else
-                {
-                    body.pre_rec(x);
-                    if (body.processNonBase)
-                    {
-                        body.post(body.non_base(x), r);
-                        CopyInput::copy(sc, ss, x);
-                    }
-
-                    push_children(stack, x, info);
-                }
-
+                nodes += hb_expand<CopyInput>(stack, x, info, body, sc, ss, on_leaf);
                 hb_step(stack, sc, ss, hb_state);
             }
 
@@ -244,33 +249,21 @@ namespace dpr
         {
             PrivateStack<T> stack;
             HBState &hb_state = hb_thread_state();
-            unsigned long long nodes = 0;
+            auto on_leaf = [&](T& c) { body.base(c); };
 
-            push_children(stack, parent, info);
+            unsigned long long nodes = hb_expand<CopyInput>(stack, parent, info, body, sc, ss, on_leaf);
 
             while (!stack.empty())
             {
                 T x = stack.pop();
-
-                body.pre(x);
                 nodes++;
-
-                if (info.is_base(x))
+                body.pre_rec(x);
+                if (body.processNonBase)
                 {
-                    body.base(x);
+                    body.non_base(x);
                     CopyInput::copy(sc, ss, x);
                 }
-                else
-                {
-                    body.pre_rec(x);
-                    if (body.processNonBase)
-                    {
-                        body.non_base(x);
-                        CopyInput::copy(sc, ss, x);
-                    }
-                    push_children(stack, x, info);
-                }
-
+                nodes += hb_expand<CopyInput>(stack, x, info, body, sc, ss, on_leaf);
                 hb_step(stack, sc, ss, hb_state);
             }
 
