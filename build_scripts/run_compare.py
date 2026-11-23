@@ -5,9 +5,15 @@
 import csv
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
+
+# progress lines appear at once in a redirected log (compare.out), and "| head" does not raise BrokenPipeError
+sys.stdout.reconfigure(line_buffering=True)
+if hasattr(signal, "SIGPIPE"):
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 MODE = os.environ.get("MODE", "full")
 if MODE not in ("full", "smoke", "tau"):
@@ -20,13 +26,15 @@ def env_list(name, default):
 
 
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
-TIMEOUT = int(os.environ.get("TIMEOUT", "3600"))
+TIMEOUT = int(os.environ.get("TIMEOUT", "1800" if MODE == "full" else "3600"))
 
 if MODE == "full":
-    N_THREADS, REPS_DEFAULT = 8, 3
-    PERIODS_DEFAULT = [5, 10, 30, 100, 1000]
-    TESTS_DEFAULT = ["fib", "NQueens", "uts_T3XXL", "uts_T2XL", "topsorts", "quicksort_gather"]
-    SIZES = {"fib": 57, "NQueens": 17, "quicksort_gather": 100000000}
+    # defaults = the measured campaign (132 runs with 1..4 nodes, ~3.5 h on 4 x 8 vCPU).
+    # wider sweep: TESTS=...,topsorts,quicksort_gather HB_PERIODS=5,10,30,100,1000 FIB_N=57 and reps=3
+    N_THREADS, REPS_DEFAULT = 8, 1
+    PERIODS_DEFAULT = [5, 30, 100, 1000]
+    TESTS_DEFAULT = ["fib", "NQueens", "uts_T3XXL", "uts_T2XL"]
+    SIZES = {"fib": 52, "NQueens": 17, "quicksort_gather": 100000000}
 elif MODE == "smoke":
     N_THREADS, REPS_DEFAULT = 4, 1
     PERIODS_DEFAULT = [30]
@@ -225,7 +233,8 @@ for n in nodes_list:
                     problems.append("%s: no valid result (%r)" % (tag, result))
                 if part == "automatic" and N_THREADS * n > 1 and promotions == 0 and period is not None and period < 1000000:
                     problems.append("%s: automatic made 0 promotions" % tag)
-                results_seen.setdefault((n, test["name"]), set()).add(result)
+                if state == "ok":  # a crashed run is already listed above; do not report it twice as a disagreement
+                    results_seen.setdefault((n, test["name"]), set()).add(result)
 
 out.close()
 
