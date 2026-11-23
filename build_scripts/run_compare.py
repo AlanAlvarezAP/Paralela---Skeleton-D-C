@@ -1,13 +1,17 @@
-# Runs simple, custom (several cutoffs) and automatic (several N) and writes a CSV.
-# usage: MODE=smoke|full|tau python3 build_scripts/run_compare.py nodes reps
-# env: TESTS, HB_PERIODS, HB_CHECK_EVERY, FIB_N, NQUEENS_N, QS_N, N_THREADS, TIMEOUT, DRY_RUN
+# Corre simple, custom y automatic (varios N) y escribe un CSV.
+# uso: MODE=smoke|full|tau python3 build_scripts/run_compare.py nodos reps
 
 import csv
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
+
+sys.stdout.reconfigure(line_buffering=True)
+if hasattr(signal, "SIGPIPE"):
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 MODE = os.environ.get("MODE", "full")
 if MODE not in ("full", "smoke", "tau"):
@@ -20,13 +24,13 @@ def env_list(name, default):
 
 
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
-TIMEOUT = int(os.environ.get("TIMEOUT", "3600"))
+TIMEOUT = int(os.environ.get("TIMEOUT", "1800" if MODE == "full" else "3600"))
 
 if MODE == "full":
-    N_THREADS, REPS_DEFAULT = 8, 3
-    PERIODS_DEFAULT = [5, 10, 30, 100, 1000]
-    TESTS_DEFAULT = ["fib", "NQueens", "uts_T3XXL", "uts_T2XL", "topsorts", "quicksort_gather"]
-    SIZES = {"fib": 57, "NQueens": 17, "quicksort_gather": 100000000}
+    N_THREADS, REPS_DEFAULT = 8, 1
+    PERIODS_DEFAULT = [5, 30, 100, 1000]
+    TESTS_DEFAULT = ["fib", "NQueens", "uts_T3XXL", "uts_T2XL"]
+    SIZES = {"fib": 52, "NQueens": 17, "quicksort_gather": 100000000}
 elif MODE == "smoke":
     N_THREADS, REPS_DEFAULT = 4, 1
     PERIODS_DEFAULT = [30]
@@ -56,7 +60,6 @@ def opt(c, fmt):
     return "" if c is None else fmt % c
 
 
-# partitioner codes and cutoffs of each benchmark
 ALL_TESTS = [
     {
         "name": "fib", "size": SIZES["fib"],
@@ -93,7 +96,6 @@ ALL_TESTS = [
     },
     {
         "name": "topsorts", "size": "cat42",
-        # no custom version
         "cmd": lambda p, c: "./bin/topsorts_dstack 4 1 0 0 100 %d" % p,
         "stdin": "sequential/inputs/topsorts/cat42.txt",
         "codes": {"simple": 0, "automatic": 2},
@@ -183,7 +185,6 @@ for n in nodes_list:
             if period is not None:
                 env["DPR_HB_PERIOD_US"] = str(period)
                 env["DPR_HB_CHECK_EVERY"] = str(check)
-                # export to the other nodes too
                 exports += " -x DPR_HB_PERIOD_US -x DPR_HB_CHECK_EVERY"
             cmd = ("mpirun --allow-run-as-root -np %d --hostfile hosts_tmp "
                    "--map-by ppr:1:node --bind-to none "
@@ -225,7 +226,8 @@ for n in nodes_list:
                     problems.append("%s: no valid result (%r)" % (tag, result))
                 if part == "automatic" and N_THREADS * n > 1 and promotions == 0 and period is not None and period < 1000000:
                     problems.append("%s: automatic made 0 promotions" % tag)
-                results_seen.setdefault((n, test["name"]), set()).add(result)
+                if state == "ok":
+                    results_seen.setdefault((n, test["name"]), set()).add(result)
 
 out.close()
 

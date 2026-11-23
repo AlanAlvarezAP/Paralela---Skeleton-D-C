@@ -1,0 +1,5 @@
+# One public IP per line, n1 (the node that runs deploy.sh) first. Copy to nodes.txt.
+203.0.113.10
+203.0.113.11
+203.0.113.12
+203.0.113.13
