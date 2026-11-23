@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup_todo.sh - instala dependencias, compila TBB y compila los benchmarks *_dstack (4 + quicksort_dstack_gatherinput).
+# setup_all.sh - instala dependencias, compila TBB y compila los benchmarks *_dstack (4 + quicksort_dstack_gatherinput).
 # (junta setup_skeleton.sh + build_dstack.sh; ya no genera build_all/run_all/sweep ni tests)
 set -e
 
@@ -47,12 +47,27 @@ fi
 echo "### 4/5 Clonar repo"
 [ -d "$SKEL" ] || git clone ${BRANCH:+--branch "$BRANCH"} "$REPO_URL" "$SKEL"
 cd "$SKEL"
+# si una corrida anterior dejo el parche aplicado, se quita antes del pull (y se vuelve a aplicar abajo)
+PATCH=${PATCH:-$(dirname "$(readlink -f "$0")")/hb_fix.patch}
+[ -f "$PATCH" ] && ! git diff --quiet && git apply --reverse --check "$PATCH" 2>/dev/null && git apply --reverse "$PATCH"
 if [ -n "$BRANCH" ]; then
   git fetch origin
   git checkout "$BRANCH"
   git pull --ff-only origin "$BRANCH"
 fi
 mkdir -p bin results
+
+# Parche opcional (p. ej. hb_fix.patch, mientras el arreglo no este en la rama): PATCH=/ruta o
+# hb_fix.patch al lado de este script. Si ya esta aplicado (o ya esta en la rama) no hace nada.
+if [ -f "$PATCH" ]; then
+  if git apply --reverse --check "$PATCH" 2>/dev/null; then
+    echo "  parche ya aplicado: $PATCH"
+  elif git apply --check "$PATCH"; then
+    git apply "$PATCH" && echo "  parche aplicado: $PATCH"
+  else
+    echo "ERROR: el parche $PATCH no aplica sobre $(git rev-parse --short HEAD)"; exit 1
+  fi
+fi
 
 echo "### 5/5 Compilar los benchmarks dstack"
 FLAGS="-O3 -DNDEBUG -pthread -include memory -fpermissive -Wno-changes-meaning -Wno-deprecated-declarations -Wno-return-type -Wno-unused-result -Iinclude -I$TBBROOT/include"
@@ -71,5 +86,6 @@ mpicxx $FLAGS -DBRG_RNG -DDPARALLEL_STACK_RECURSION -I$U -I$U/rng $U/uts_par_rec
 mpicxx $FLAGS benchmarks/quicksort_dstack_gatherinput.cpp -o bin/quicksort_dstack_gatherinput $LIBS &
 wait
 
-ls -l bin/*_dstack
+ls -l bin/*_dstack bin/quicksort_dstack_gatherinput
+md5sum include/dparallel_recursion/HeartBeat.h
 echo "Listo. Abre una terminal nueva (o: source ~/.bashrc)."
