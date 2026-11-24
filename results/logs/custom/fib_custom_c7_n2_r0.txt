@@ -1,0 +1,19 @@
+HB_STATS mode=run rank=1 thread=4 promotions=0
+HB_STATS mode=run rank=1 thread=6 promotions=0
+HB_STATS mode=run rank=1 thread=7 promotions=0
+HB_STATS mode=run rank=1 thread=0 promotions=0
+HB_STATS mode=run rank=1 thread=2 promotions=0
+HB_STATS mode=run rank=1 thread=5 promotions=0
+HB_STATS mode=run rank=1 thread=1 promotions=0
+HB_STATS mode=run rank=1 thread=3 promotions=0
+HB_STATS mode=run rank=0 thread=3 promotions=0
+HB_STATS mode=run rank=0 thread=5 promotions=0
+HB_STATS mode=run rank=0 thread=1 promotions=0
+HB_STATS mode=run rank=0 thread=0 promotions=0
+HB_STATS mode=run rank=0 thread=7 promotions=0
+HB_STATS mode=run rank=0 thread=6 promotions=0
+HB_STATS mode=run rank=0 thread=4 promotions=0
+HB_STATS mode=run rank=0 thread=2 promotions=0
+NProcs=2 Threads=8 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=custom limitParallel=7 mpiWrLimits=-5000
+compute time: 12.6138
+fib(52): 32951280099

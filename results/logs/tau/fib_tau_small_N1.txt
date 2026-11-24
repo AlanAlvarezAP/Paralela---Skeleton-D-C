@@ -1,0 +1,4 @@
+HB_STATS mode=run rank=0 thread=0 promotions=52656577
+NProcs=1 Threads=1 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=automatic mpiWrLimits=-5000
+compute time: 26.9053
+fib(42): 267914296

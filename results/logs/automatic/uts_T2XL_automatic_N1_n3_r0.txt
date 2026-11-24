@@ -1,0 +1,41 @@
+UTS - Unbalanced Tree Search 2.1 (dparallel_stack_recursion)
+Tree type:  1 (Geometric)
+Tree shape parameters:
+  root branching factor b_0 = 7.0, root seed = 220
+  GEO parameters: gen_mx = 26, shape function = 2 (Cyclic)
+Random number generator: SHA-1 (state size = 20B)
+Compute granularity: 1
+Execution strategy:  Parallel search using 8 threads
+   Load balance by work stealing, chunk size = 20 nodes
+  CBarrier Interval: 1
+   Polling Interval: 0
+   Initial Stack Size: 100
+
+HB_STATS mode=run rank=0 thread=3 promotions=3111559
+HB_STATS mode=run rank=0 thread=1 promotions=3089777
+HB_STATS mode=run rank=0 thread=0 promotions=3063424
+HB_STATS mode=run rank=0 thread=2 promotions=3096459
+HB_STATS mode=run rank=0 thread=7 promotions=3063460
+HB_STATS mode=run rank=0 thread=5 promotions=3113267
+HB_STATS mode=run rank=0 thread=6 promotions=3076786
+HB_STATS mode=run rank=0 thread=4 promotions=3092583
+HB_STATS mode=run rank=2 thread=0 promotions=3032623
+HB_STATS mode=run rank=2 thread=1 promotions=2967877
+HB_STATS mode=run rank=2 thread=2 promotions=3040708
+HB_STATS mode=run rank=2 thread=3 promotions=2992477
+HB_STATS mode=run rank=2 thread=6 promotions=3009376
+HB_STATS mode=run rank=2 thread=5 promotions=3057936
+HB_STATS mode=run rank=2 thread=7 promotions=3059063
+HB_STATS mode=run rank=2 thread=4 promotions=3066217
+HB_STATS mode=run rank=1 thread=0 promotions=3024729
+HB_STATS mode=run rank=1 thread=7 promotions=3034399
+HB_STATS mode=run rank=1 thread=5 promotions=3060751
+HB_STATS mode=run rank=1 thread=1 promotions=3055927
+HB_STATS mode=run rank=1 thread=6 promotions=3066820
+HB_STATS mode=run rank=1 thread=2 promotions=3036894
+HB_STATS mode=run rank=1 thread=4 promotions=3043514
+HB_STATS mode=run rank=1 thread=3 promotions=3663311
+3 processes 24 threads
+Tree size = 1495081468, tree depth = 104, num leaves = 822613977 (55.02%)
+Wallclock time = 34.595 sec, performance = 43217274 nodes/sec (5402159 nodes/sec per PE)
+

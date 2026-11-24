@@ -1,0 +1,7 @@
+
+Enter number of vertices and edges:
+Enter 17 edge(s) as pairs i j, i<j : 
+Nprocs=1 threads=1 sz=18 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=2 mpiWrLimits=-5000 trpPredWc=-1
+HB_STATS mode=run rank=0 thread=0 promotions=0
+Result: 34459425
+Time: 3.412688

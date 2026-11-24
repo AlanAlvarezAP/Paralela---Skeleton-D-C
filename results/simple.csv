@@ -1,0 +1,17 @@
+nodes,test,config,cutoff,N_us,rep,time_s,promotions,result,state,stack,campaign
+1,fib,simple,,,0,36.6211,,32951280099,ok,default,1
+2,fib,simple,,,0,19.926,,32951280099,ok,default,1
+3,fib,simple,,,0,15.099,,32951280099,ok,default,1
+4,fib,simple,,,0,12.0369,,32951280099,ok,default,1
+1,uts_T3XXL,simple,,,0,85.074,,18446744072207804821,ok,1GB,3
+2,uts_T3XXL,simple,,,0,43.518,,18446744072207804821,ok,1GB,3
+3,uts_T3XXL,simple,,,0,29.695,,18446744072207804821,ok,1GB,3
+4,uts_T3XXL,simple,,,0,22.545,,18446744072207804821,ok,1GB,3
+1,uts_T2XL,simple,,,0,58.119,,1495081468,ok,default,1
+2,uts_T2XL,simple,,,0,447.108,,1495081468,ok,default,1
+3,uts_T2XL,simple,,,0,27.200,,1495081468,ok,default,1
+4,uts_T2XL,simple,,,0,23.588,,1495081468,ok,default,1
+1,topsorts,simple,,,0,212.95628,,13749310575,ok,default,3
+2,topsorts,simple,,,0,107.743931,,13749310575,ok,default,3
+3,topsorts,simple,,,0,71.472615,,13749310575,ok,default,3
+4,topsorts,simple,,,0,55.169969,,13749310575,ok,default,3

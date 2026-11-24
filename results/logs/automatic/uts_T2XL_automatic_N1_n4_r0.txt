@@ -1,0 +1,49 @@
+UTS - Unbalanced Tree Search 2.1 (dparallel_stack_recursion)
+Tree type:  1 (Geometric)
+Tree shape parameters:
+  root branching factor b_0 = 7.0, root seed = 220
+  GEO parameters: gen_mx = 26, shape function = 2 (Cyclic)
+Random number generator: SHA-1 (state size = 20B)
+Compute granularity: 1
+Execution strategy:  Parallel search using 8 threads
+   Load balance by work stealing, chunk size = 20 nodes
+  CBarrier Interval: 1
+   Polling Interval: 0
+   Initial Stack Size: 100
+
+HB_STATS mode=run rank=0 thread=5 promotions=2335404
+HB_STATS mode=run rank=0 thread=1 promotions=2282496
+HB_STATS mode=run rank=0 thread=6 promotions=2309442
+HB_STATS mode=run rank=0 thread=0 promotions=2318761
+HB_STATS mode=run rank=0 thread=2 promotions=2296832
+HB_STATS mode=run rank=0 thread=3 promotions=2304694
+HB_STATS mode=run rank=0 thread=7 promotions=2327781
+HB_STATS mode=run rank=0 thread=4 promotions=2303476
+HB_STATS mode=run rank=1 thread=0 promotions=2315821
+HB_STATS mode=run rank=1 thread=2 promotions=2322106
+HB_STATS mode=run rank=1 thread=3 promotions=2328171
+HB_STATS mode=run rank=1 thread=4 promotions=2352027
+HB_STATS mode=run rank=1 thread=6 promotions=2334107
+HB_STATS mode=run rank=1 thread=5 promotions=2329205
+HB_STATS mode=run rank=1 thread=7 promotions=2322705
+HB_STATS mode=run rank=1 thread=1 promotions=2317407
+HB_STATS mode=run rank=2 thread=3 promotions=2314086
+HB_STATS mode=run rank=2 thread=0 promotions=2288811
+HB_STATS mode=run rank=2 thread=6 promotions=2325552
+HB_STATS mode=run rank=2 thread=4 promotions=2304205
+HB_STATS mode=run rank=2 thread=2 promotions=2316407
+HB_STATS mode=run rank=2 thread=5 promotions=2218227
+HB_STATS mode=run rank=2 thread=1 promotions=2289371
+HB_STATS mode=run rank=2 thread=7 promotions=2318544
+HB_STATS mode=run rank=3 thread=4 promotions=2309170
+HB_STATS mode=run rank=3 thread=6 promotions=2311330
+HB_STATS mode=run rank=3 thread=0 promotions=2290744
+HB_STATS mode=run rank=3 thread=5 promotions=2308320
+HB_STATS mode=run rank=3 thread=3 promotions=2293031
+HB_STATS mode=run rank=3 thread=7 promotions=2311995
+HB_STATS mode=run rank=3 thread=2 promotions=2300954
+HB_STATS mode=run rank=3 thread=1 promotions=2314142
+4 processes 32 threads
+Tree size = 1495081468, tree depth = 104, num leaves = 822613977 (55.02%)
+Wallclock time = 31.908 sec, performance = 46855378 nodes/sec (5856922 nodes/sec per PE)
+
