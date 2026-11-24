@@ -1,0 +1,19 @@
+HB_STATS mode=run rank=0 thread=4 promotions=64409379
+HB_STATS mode=run rank=0 thread=0 promotions=63886063
+HB_STATS mode=run rank=0 thread=6 promotions=64344153
+HB_STATS mode=run rank=0 thread=7 promotions=64168978
+HB_STATS mode=run rank=0 thread=1 promotions=64325523
+HB_STATS mode=run rank=0 thread=5 promotions=64643464
+HB_STATS mode=run rank=0 thread=2 promotions=63866683
+HB_STATS mode=run rank=0 thread=3 promotions=64386751
+HB_STATS mode=run rank=1 thread=1 promotions=63704095
+HB_STATS mode=run rank=1 thread=0 promotions=63824981
+HB_STATS mode=run rank=1 thread=7 promotions=63531714
+HB_STATS mode=run rank=1 thread=6 promotions=63627975
+HB_STATS mode=run rank=1 thread=3 promotions=63617443
+HB_STATS mode=run rank=1 thread=2 promotions=63837383
+HB_STATS mode=run rank=1 thread=4 promotions=63508863
+HB_STATS mode=run rank=1 thread=5 promotions=63512239
+NProcs=2 Threads=8 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=automatic mpiWrLimits=-5000
+compute time: 150.479
+fib(52): 32951280099

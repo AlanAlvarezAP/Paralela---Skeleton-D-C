@@ -1,0 +1,25 @@
+UTS - Unbalanced Tree Search 2.1 (dparallel_stack_recursion)
+Tree type:  1 (Geometric)
+Tree shape parameters:
+  root branching factor b_0 = 7.0, root seed = 220
+  GEO parameters: gen_mx = 26, shape function = 2 (Cyclic)
+Random number generator: SHA-1 (state size = 20B)
+Compute granularity: 1
+Execution strategy:  Parallel search using 8 threads
+   Load balance by work stealing, chunk size = 20 nodes
+  CBarrier Interval: 1
+   Polling Interval: 0
+   Initial Stack Size: 100
+
+HB_STATS mode=run rank=0 thread=0 promotions=0
+HB_STATS mode=run rank=0 thread=2 promotions=0
+HB_STATS mode=run rank=0 thread=6 promotions=0
+HB_STATS mode=run rank=0 thread=1 promotions=0
+HB_STATS mode=run rank=0 thread=4 promotions=0
+HB_STATS mode=run rank=0 thread=3 promotions=0
+HB_STATS mode=run rank=0 thread=7 promotions=0
+HB_STATS mode=run rank=0 thread=5 promotions=0
+1 processes 8 threads
+Tree size = 1495081468, tree depth = 104, num leaves = 822613977 (55.02%)
+Wallclock time = 480.773 sec, performance = 3109746 nodes/sec (388718 nodes/sec per PE)
+

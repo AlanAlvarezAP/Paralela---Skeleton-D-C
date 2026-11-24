@@ -1,0 +1,38 @@
+
+Enter number of vertices and edges:
+Enter 21 edge(s) as pairs i j, i<j : 
+Nprocs=4 threads=8 sz=22 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=2 mpiWrLimits=-5000 trpPredWc=-1
+HB_STATS mode=run rank=0 thread=5 promotions=5801436
+HB_STATS mode=run rank=0 thread=4 promotions=5568769
+HB_STATS mode=run rank=0 thread=7 promotions=5796054
+HB_STATS mode=run rank=0 thread=0 promotions=5770551
+HB_STATS mode=run rank=0 thread=3 promotions=5846033
+HB_STATS mode=run rank=0 thread=1 promotions=5802402
+HB_STATS mode=run rank=0 thread=6 promotions=5822976
+HB_STATS mode=run rank=0 thread=2 promotions=5808762
+HB_STATS mode=run rank=1 thread=7 promotions=5728556
+HB_STATS mode=run rank=1 thread=5 promotions=5719583
+HB_STATS mode=run rank=1 thread=3 promotions=5699456
+HB_STATS mode=run rank=1 thread=0 promotions=5673043
+HB_STATS mode=run rank=1 thread=2 promotions=5729179
+HB_STATS mode=run rank=1 thread=6 promotions=5720375
+HB_STATS mode=run rank=1 thread=4 promotions=5717264
+HB_STATS mode=run rank=1 thread=1 promotions=5708535
+HB_STATS mode=run rank=2 thread=6 promotions=5783667
+HB_STATS mode=run rank=2 thread=0 promotions=5825338
+HB_STATS mode=run rank=2 thread=4 promotions=5680274
+HB_STATS mode=run rank=2 thread=2 promotions=5840836
+HB_STATS mode=run rank=2 thread=1 promotions=5766520
+HB_STATS mode=run rank=2 thread=7 promotions=5818218
+HB_STATS mode=run rank=2 thread=5 promotions=5785090
+HB_STATS mode=run rank=2 thread=3 promotions=5791606
+HB_STATS mode=run rank=3 thread=3 promotions=5819169
+HB_STATS mode=run rank=3 thread=7 promotions=5820625
+HB_STATS mode=run rank=3 thread=2 promotions=5804163
+HB_STATS mode=run rank=3 thread=6 promotions=5788915
+HB_STATS mode=run rank=3 thread=4 promotions=5807820
+HB_STATS mode=run rank=3 thread=1 promotions=5781677
+HB_STATS mode=run rank=3 thread=0 promotions=5809946
+HB_STATS mode=run rank=3 thread=5 promotions=5808426
+Result: 13749310575
+Time: 68.027333

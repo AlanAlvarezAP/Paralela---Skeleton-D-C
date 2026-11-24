@@ -1,0 +1,11 @@
+HB_STATS mode=run rank=0 thread=1 promotions=126428612
+HB_STATS mode=run rank=0 thread=7 promotions=127670060
+HB_STATS mode=run rank=0 thread=4 promotions=117637191
+HB_STATS mode=run rank=0 thread=3 promotions=126931848
+HB_STATS mode=run rank=0 thread=0 promotions=126859124
+HB_STATS mode=run rank=0 thread=6 promotions=126953019
+NProcs=1 Threads=8 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=automatic mpiWrLimits=-5000
+compute time: 71.0923
+fib(52): 32951280099
+HB_STATS mode=run rank=0 thread=2 promotions=127622709
+HB_STATS mode=run rank=0 thread=5 promotions=128372194

@@ -1,0 +1,28 @@
+n4
+CPU(s):                                  8
+Model name:                              AMD EPYC 7543 32-Core Processor
+BIOS Model name:                         pc-i440fx-jammy  CPU @ 2.0GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1
+n3
+CPU(s):                                  8
+Model name:                              AMD EPYC 7543 32-Core Processor
+BIOS Model name:                         pc-i440fx-jammy  CPU @ 2.0GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1
+n2
+CPU(s):                                  8
+Model name:                              AMD EPYC 7543 32-Core Processor
+BIOS Model name:                         pc-i440fx-jammy  CPU @ 2.0GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1
+n1
+CPU(s):                                  8
+Model name:                              AMD EPYC 7543 32-Core Processor
+BIOS Model name:                         pc-i440fx-jammy  CPU @ 2.0GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1

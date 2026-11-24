@@ -1,0 +1,14 @@
+
+Enter number of vertices and edges:
+Enter 21 edge(s) as pairs i j, i<j : 
+Nprocs=1 threads=8 sz=22 chunkSize=4 stackSize=100 chunksToSteal=1 pollingI=0 trp=0 partitioner=0 mpiWrLimits=-5000 trpPredWc=-1
+HB_STATS mode=run rank=0 thread=5 promotions=0
+HB_STATS mode=run rank=0 thread=3 promotions=0
+HB_STATS mode=run rank=0 thread=6 promotions=0
+HB_STATS mode=run rank=0 thread=7 promotions=0
+HB_STATS mode=run rank=0 thread=1 promotions=0
+HB_STATS mode=run rank=0 thread=4 promotions=0
+HB_STATS mode=run rank=0 thread=0 promotions=0
+HB_STATS mode=run rank=0 thread=2 promotions=0
+Result: 13749310575
+Time: 212.956280
